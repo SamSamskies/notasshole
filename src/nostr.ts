@@ -259,10 +259,47 @@ function parseProfileContent(content: string): ProfileInfo {
 function isSafeHttpUrl(value: string): boolean {
   try {
     const url = new URL(value)
-    return url.protocol === 'https:' || url.protocol === 'http:'
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return false
+    if (url.username || url.password) return false
+    return !isPrivateOrLocalHostname(url.hostname)
   } catch {
     return false
   }
+}
+
+/** Reject hosts that would make the browser hit the visitor's local/LAN network. */
+function isPrivateOrLocalHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  if (!host || host === 'localhost' || host.endsWith('.localhost')) return true
+  if (host === 'local' || host.endsWith('.local')) return true
+  if (host === '::1' || host === '0.0.0.0' || host === '::') return true
+
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host)
+  if (ipv4) {
+    const octets = ipv4.slice(1).map(Number)
+    if (octets.some((n) => n > 255)) return true
+    const [a, b] = octets
+    if (a === 0 || a === 10 || a === 127) return true
+    if (a === 169 && b === 254) return true
+    if (a === 172 && b >= 16 && b <= 31) return true
+    if (a === 192 && b === 168) return true
+    if (a === 100 && b >= 64 && b <= 127) return true
+    return false
+  }
+
+  if (host.includes(':')) {
+    if (
+      host.startsWith('fe80:') ||
+      host.startsWith('fc') ||
+      host.startsWith('fd')
+    ) {
+      return true
+    }
+    const mapped = /:ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(host)
+    if (mapped) return isPrivateOrLocalHostname(mapped[1])
+  }
+
+  return false
 }
 
 async function queryRelays(relays: string[], filter: Filter): Promise<Event[]> {
