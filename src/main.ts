@@ -19,9 +19,13 @@ import {
   type ProfileInfo,
 } from './nostr'
 
-const LOADING_MESSAGES = [
+const FETCH_LOADING_MESSAGES = [
   'SEARCHING THE RELAYS...',
   'COLLECTING EVIDENCE...',
+  'SCANNING PUBLIC NOTES...',
+]
+
+const INFERENCE_LOADING_MESSAGES = [
   'ANALYZING REPLY-GUY ACTIVITY...',
   'MEASURING CONDESCENSION...',
   'CALCULATING ASSHOLE COEFFICIENT...',
@@ -50,8 +54,8 @@ let loadingTimer: number | undefined
 let abortController: AbortController | undefined
 let lastInput = ''
 
-function shuffleMessages(): string[] {
-  const copy = [...LOADING_MESSAGES]
+function shuffleMessages(messages: string[]): string[] {
+  const copy = [...messages]
   for (let i = copy.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1))
     ;[copy[i], copy[j]] = [copy[j], copy[i]]
@@ -71,17 +75,17 @@ function stopLoadingCycle() {
   }
 }
 
-function startLoadingCycle() {
+function startLoadingCycle(messages: string[]) {
   stopLoadingCycle()
-  const messages = shuffleMessages()
+  const shuffled = shuffleMessages(messages)
   let index = 0
-  setState({ view: 'loading', message: messages[0] })
+  setState({ view: 'loading', message: shuffled[0] })
   loadingTimer = window.setInterval(() => {
-    index = (index + 1) % messages.length
+    index = (index + 1) % shuffled.length
     if (state.view !== 'loading') return
-    state = { view: 'loading', message: messages[index] }
+    state = { view: 'loading', message: shuffled[index] }
     const status = document.querySelector('.loading-status')
-    if (status) status.textContent = messages[index]
+    if (status) status.textContent = shuffled[index]
   }, 1600)
 }
 
@@ -450,7 +454,7 @@ async function judge(raw: string) {
   abortController = new AbortController()
   const signal = abortController.signal
 
-  startLoadingCycle()
+  startLoadingCycle(FETCH_LOADING_MESSAGES)
 
   try {
     const identity = await resolveIdentity(lastInput)
@@ -486,10 +490,7 @@ async function judge(raw: string) {
       return
     }
 
-    stopLoadingCycle()
-    if (isActiveJudge(signal) && state.view === 'loading') {
-      setState({ view: 'loading', message: 'CONSULTING ASSHOLENET...' })
-    }
+    startLoadingCycle(INFERENCE_LOADING_MESSAGES)
 
     const verdict = await requestVerdict(formatNotesForPrompt(notes), signal)
     if (!isActiveJudge(signal)) return
