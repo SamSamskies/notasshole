@@ -114,13 +114,13 @@ export function parseVerdict(raw: string): Verdict {
 
   const record = data as Record<string, unknown>
   const verdict = record.verdict
-  const confidence = record.confidence
+  const confidence = coerceConfidence(record.confidence)
   const reason = record.reason
 
   if (verdict !== 'ASSHOLE' && verdict !== 'NOT ASSHOLE') {
     throw new VerdictParseError()
   }
-  if (typeof confidence !== 'number' || !Number.isFinite(confidence)) {
+  if (confidence === null) {
     throw new VerdictParseError()
   }
   if (typeof reason !== 'string' || !reason.trim()) {
@@ -135,6 +135,18 @@ export function parseVerdict(raw: string): Verdict {
     reason: reason.trim(),
     model: '',
   }
+}
+
+/** Accept numeric JSON numbers or common string forms like "85". */
+function coerceConfidence(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return null
+    const parsed = Number(trimmed)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
 }
 
 export async function requestVerdict(
