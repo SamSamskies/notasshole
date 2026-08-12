@@ -85,10 +85,20 @@ function startLoadingCycle() {
   }, 1600)
 }
 
-function updateIpaBanner() {
+function syncInferenceUi() {
+  const available = hasInference()
+
   const banner = document.querySelector<HTMLElement>('#ipa-banner')
-  if (!banner) return
-  banner.hidden = hasInference()
+  if (banner) banner.hidden = available
+
+  if (state.view !== 'idle') return
+
+  const input = document.querySelector<HTMLInputElement>('#identity')
+  const button = document.querySelector<HTMLButtonElement>(
+    '.judge-form button[type="submit"]',
+  )
+  if (input) input.disabled = !available
+  if (button) button.disabled = !available
 }
 
 function renderBanner(): HTMLElement {
@@ -367,11 +377,9 @@ function renderResult(
 }
 
 function render() {
-  updateIpaBanner()
-
   switch (state.view) {
     case 'idle':
-      renderShell(renderForm(false))
+      renderShell(renderForm(!hasInference()))
       document.querySelector<HTMLInputElement>('#identity')?.focus()
       break
     case 'loading':
@@ -390,7 +398,7 @@ function render() {
       break
   }
 
-  updateIpaBanner()
+  syncInferenceUi()
 }
 
 async function judge(raw: string) {
@@ -489,7 +497,6 @@ async function judge(raw: string) {
           'Enable an IPA-compatible extension (Inference Bridge) to perform the analysis, then reload.',
         retryable: true,
       })
-      updateIpaBanner()
       return
     }
 
@@ -519,9 +526,9 @@ async function judge(raw: string) {
 // Extensions inject after load; re-check a few times and on focus.
 render()
 for (const ms of [250, 1000, 2500]) {
-  window.setTimeout(updateIpaBanner, ms)
+  window.setTimeout(syncInferenceUi, ms)
 }
-window.addEventListener('focus', updateIpaBanner)
+window.addEventListener('focus', syncInferenceUi)
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') updateIpaBanner()
+  if (document.visibilityState === 'visible') syncInferenceUi()
 })
