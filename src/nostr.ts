@@ -1,4 +1,4 @@
-import { nip19, SimplePool, type Event } from 'nostr-tools'
+import { nip19, SimplePool, type Event, type Filter } from 'nostr-tools'
 import { isNip05, queryProfile } from 'nostr-tools/nip05'
 
 export type NostrIdentity = {
@@ -10,7 +10,6 @@ export const DEFAULT_RELAYS = [
   'wss://relay.damus.io',
   'wss://nos.lol',
   'wss://relay.primal.net',
-  'wss://relay.nostr.band',
   'wss://pyramid.fiatjaf.com',
 ]
 
@@ -219,49 +218,56 @@ function isSafeHttpUrl(value: string): boolean {
   }
 }
 
-export async function fetchRecentNotes(
-  identity: NostrIdentity,
-): Promise<Event[]> {
-  const relays = resolveRelays(identity)
+async function queryRelays(relays: string[], filter: Filter): Promise<Event[]> {
   const pool = new SimplePool()
 
   try {
-    const events = await pool.querySync(
-      relays,
-      {
-        kinds: [1],
-        authors: [identity.pubkey],
-        limit: FETCH_LIMIT,
-      },
-      { maxWait: RELAY_MAX_WAIT_MS },
+    // Query each relay independently so one dead endpoint cannot fail the rest.
+    const settled = await Promise.allSettled(
+      relays.map((relay) =>
+        pool.querySync([relay], filter, { maxWait: RELAY_MAX_WAIT_MS }),
+      ),
     )
-    return selectNotes(events)
+
+    const events: Event[] = []
+    for (const result of settled) {
+      if (result.status === 'fulfilled') {
+        events.push(...result.value)
+      }
+    }
+    return events
+  } catch {
+    return []
   } finally {
     pool.destroy()
   }
 }
 
+export async function fetchRecentNotes(
+  identity: NostrIdentity,
+): Promise<Event[]> {
+  const events = await queryRelays(resolveRelays(identity), {
+    kinds: [1],
+    authors: [identity.pubkey],
+    limit: FETCH_LIMIT,
+  })
+  return selectNotes(events)
+}
+
 export async function fetchProfile(
   identity: NostrIdentity,
 ): Promise<ProfileInfo> {
-  const relays = resolveRelays(identity)
-  const pool = new SimplePool()
-
   try {
-    const event = await pool.get(
-      relays,
-      {
-        kinds: [0],
-        authors: [identity.pubkey],
-      },
-      { maxWait: RELAY_MAX_WAIT_MS },
-    )
+    const events = await queryRelays(resolveRelays(identity), {
+      kinds: [0],
+      authors: [identity.pubkey],
+      limit: 1,
+    })
+    const event = events.sort((a, b) => b.created_at - a.created_at)[0]
     if (!event) return {}
     return parseProfileContent(event.content)
   } catch {
     return {}
-  } finally {
-    pool.destroy()
   }
 }
 
