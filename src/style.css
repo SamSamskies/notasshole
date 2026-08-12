@@ -66,6 +66,7 @@ body::before {
 
 .shell {
   width: min(34rem, 100%);
+  min-height: calc(100vh - 3.25rem);
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
@@ -475,6 +476,70 @@ body::before {
   color: var(--muted);
   font-size: 0.82rem;
   line-height: 1.4;
+}
+
+.site-footer {
+  display: flex;
+  justify-content: center;
+  margin-top: auto;
+  padding-top: 1.5rem;
+}
+
+.footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem 0.65rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+}
+
+.footer-links a,
+.zap-button {
+  color: var(--muted);
+}
+
+.footer-text {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.footer-icon,
+.zap-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  line-height: 1;
+}
+
+.footer-links a:hover,
+.zap-button:hover {
+  color: var(--ink);
+}
+
+.footer-links a:focus-visible,
+.zap-button:focus-visible {
+  outline: 2px solid var(--mustard-deep);
+  outline-offset: 2px;
+}
+
+.footer-sep {
+  color: var(--line);
+  user-select: none;
+}
+
+.zap-button {
+  margin: 0;
+  padding: 0.1rem;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 1.05rem;
+  line-height: 1;
+  cursor: pointer;
 }
 
 .sr-only {
