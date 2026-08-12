@@ -1,0 +1,527 @@
+import './style.css'
+import type { Event } from 'nostr-tools'
+import {
+  hasInference,
+  INFERENCE_BRIDGE_URL,
+  InferenceUnavailableError,
+  requestVerdict,
+  type Verdict,
+} from './inference'
+import {
+  fetchProfile,
+  fetchRecentNotes,
+  formatNotesForPrompt,
+  IdentityError,
+  MIN_NOTES,
+  Nip05Error,
+  PrivateKeyError,
+  resolveIdentity,
+  type ProfileInfo,
+} from './nostr'
+
+const LOADING_MESSAGES = [
+  'SEARCHING THE RELAYS...',
+  'COLLECTING EVIDENCE...',
+  'ANALYZING REPLY-GUY ACTIVITY...',
+  'MEASURING CONDESCENSION...',
+  'CALCULATING ASSHOLE COEFFICIENT...',
+  'CONSULTING ASSHOLENET...',
+  'CHECKING FOR "WELL ACTUALLY"...',
+]
+
+type AppState =
+  | { view: 'idle' }
+  | { view: 'loading'; message: string }
+  | { view: 'error'; title: string; detail: string; retryable: boolean }
+  | {
+      view: 'result'
+      verdict: Verdict
+      notes: Event[]
+      profile: ProfileInfo
+      showNotes: boolean
+    }
+
+const appEl = document.querySelector<HTMLDivElement>('#app')
+if (!appEl) throw new Error('#app missing')
+const app = appEl
+
+let state: AppState = { view: 'idle' }
+let loadingTimer: number | undefined
+let abortController: AbortController | undefined
+let lastInput = ''
+
+function shuffleMessages(): string[] {
+  const copy = [...LOADING_MESSAGES]
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[copy[i], copy[j]] = [copy[j], copy[i]]
+  }
+  return copy
+}
+
+function setState(next: AppState) {
+  state = next
+  render()
+}
+
+function stopLoadingCycle() {
+  if (loadingTimer !== undefined) {
+    window.clearInterval(loadingTimer)
+    loadingTimer = undefined
+  }
+}
+
+function startLoadingCycle() {
+  stopLoadingCycle()
+  const messages = shuffleMessages()
+  let index = 0
+  setState({ view: 'loading', message: messages[0] })
+  loadingTimer = window.setInterval(() => {
+    index = (index + 1) % messages.length
+    if (state.view !== 'loading') return
+    state = { view: 'loading', message: messages[index] }
+    const status = document.querySelector('.loading-status')
+    if (status) status.textContent = messages[index]
+  }, 1600)
+}
+
+function updateIpaBanner() {
+  const banner = document.querySelector<HTMLElement>('#ipa-banner')
+  if (!banner) return
+  banner.hidden = hasInference()
+}
+
+function renderBanner(): HTMLElement {
+  const banner = document.createElement('aside')
+  banner.id = 'ipa-banner'
+  banner.className = 'ipa-banner'
+  banner.hidden = hasInference()
+
+  const text = document.createElement('p')
+  text.textContent =
+    'Inference Provider API not detected. Install Inference Bridge to run AssholeNet.'
+
+  const link = document.createElement('a')
+  link.href = INFERENCE_BRIDGE_URL
+  link.target = '_blank'
+  link.rel = 'noopener noreferrer'
+  link.textContent = 'Get Inference Bridge'
+
+  banner.append(text, link)
+  return banner
+}
+
+function renderShell(content: HTMLElement) {
+  app.replaceChildren()
+
+  const shell = document.createElement('div')
+  shell.className = 'shell'
+
+  shell.append(renderBanner())
+
+  const header = document.createElement('header')
+  header.className = 'hero'
+
+  const brand = document.createElement('p')
+  brand.className = 'brand'
+  brand.textContent = 'ASSHOLE DETECTOR'
+
+  const tagline = document.createElement('p')
+  tagline.className = 'tagline'
+  tagline.textContent =
+    'Advanced AI-powered Nostr personality analysis.'
+
+  header.append(brand, tagline)
+  shell.append(header, content)
+
+  const disclaimer = document.createElement('p')
+  disclaimer.className = 'disclaimer'
+  disclaimer.textContent =
+    'For entertainment only. Results are AI-generated jokes based on public Nostr posts. Powered by highly questionable science.'
+
+  shell.append(disclaimer)
+  app.append(shell)
+}
+
+function renderForm(disabled = false): HTMLElement {
+  const panel = document.createElement('section')
+  panel.className = 'panel'
+
+  const form = document.createElement('form')
+  form.className = 'judge-form'
+  form.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const input = form.querySelector<HTMLInputElement>('#identity')
+    void judge(input?.value ?? '')
+  })
+
+  const label = document.createElement('label')
+  label.className = 'sr-only'
+  label.htmlFor = 'identity'
+  label.textContent = 'Nostr identity'
+
+  const input = document.createElement('input')
+  input.id = 'identity'
+  input.name = 'identity'
+  input.type = 'text'
+  input.autocomplete = 'off'
+  input.spellcheck = false
+  input.placeholder = 'npub / nprofile / nip05 / pubkey'
+  input.value = lastInput
+  input.disabled = disabled
+  input.required = true
+
+  const button = document.createElement('button')
+  button.type = 'submit'
+  button.className = 'primary'
+  button.textContent = 'JUDGE'
+  button.disabled = disabled
+
+  form.append(label, input, button)
+  panel.append(form)
+  return panel
+}
+
+function renderLoading(message: string) {
+  const panel = document.createElement('section')
+  panel.className = 'panel loading-panel'
+
+  const status = document.createElement('p')
+  status.className = 'loading-status'
+  status.setAttribute('aria-live', 'polite')
+  status.textContent = message
+
+  const meter = document.createElement('div')
+  meter.className = 'meter'
+  meter.setAttribute('aria-hidden', 'true')
+  const bar = document.createElement('span')
+  meter.append(bar)
+
+  panel.append(status, meter)
+  renderShell(panel)
+}
+
+function renderError(title: string, detail: string, retryable: boolean) {
+  const panel = document.createElement('section')
+  panel.className = 'panel error-panel'
+
+  const heading = document.createElement('h2')
+  heading.className = 'error-title'
+  heading.textContent = title
+
+  const body = document.createElement('p')
+  body.className = 'error-detail'
+  body.textContent = detail
+
+  const actions = document.createElement('div')
+  actions.className = 'actions'
+
+  if (retryable) {
+    const retry = document.createElement('button')
+    retry.type = 'button'
+    retry.className = 'primary'
+    retry.textContent = 'TRY AGAIN'
+    retry.addEventListener('click', () => void judge(lastInput))
+    actions.append(retry)
+  }
+
+  const again = document.createElement('button')
+  again.type = 'button'
+  again.className = 'secondary'
+  again.textContent = 'JUDGE ANOTHER'
+  again.addEventListener('click', () => {
+    abortController?.abort()
+    stopLoadingCycle()
+    setState({ view: 'idle' })
+  })
+  actions.append(again)
+
+  panel.append(heading, body, actions)
+  renderShell(panel)
+}
+
+function createAnonAvatar(): SVGSVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('class', 'anon-avatar')
+  svg.setAttribute('viewBox', '0 0 64 64')
+  svg.setAttribute('aria-hidden', 'true')
+
+  const head = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+  head.setAttribute('cx', '32')
+  head.setAttribute('cy', '24')
+  head.setAttribute('r', '12')
+  head.setAttribute('fill', 'currentColor')
+
+  const body = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  body.setAttribute(
+    'd',
+    'M12 58c0-12.15 8.95-22 20-22s20 9.85 20 22',
+  )
+  body.setAttribute('fill', 'currentColor')
+
+  svg.append(head, body)
+  return svg
+}
+
+function renderResult(
+  verdict: Verdict,
+  notes: Event[],
+  profile: ProfileInfo,
+  showNotes: boolean,
+) {
+  const panel = document.createElement('section')
+  panel.className = 'panel result-panel'
+
+  const mugshot = document.createElement('div')
+  mugshot.className = 'mugshot'
+  mugshot.append(createAnonAvatar())
+
+  if (profile.picture) {
+    const img = document.createElement('img')
+    img.className = 'avatar'
+    img.src = profile.picture
+    img.alt = profile.displayName
+      ? `Profile picture of ${profile.displayName}`
+      : 'Profile picture'
+    img.referrerPolicy = 'no-referrer'
+    img.decoding = 'async'
+    img.addEventListener('error', () => {
+      img.remove()
+    })
+    mugshot.append(img)
+  }
+
+  const subject = document.createElement('p')
+  subject.className = 'subject-name'
+  subject.textContent = profile.displayName?.trim() || 'Unknown subject'
+
+  const stamp = document.createElement('div')
+  stamp.className = `stamp ${verdict.verdict === 'ASSHOLE' ? 'bad' : 'good'}`
+  stamp.textContent =
+    verdict.verdict === 'ASSHOLE' ? '🚨 ASSHOLE' : '✅ NOT ASSHOLE'
+
+  const confidence = document.createElement('p')
+  confidence.className = 'confidence'
+  confidence.textContent = `${verdict.confidence}% CONFIDENCE`
+
+  const reason = document.createElement('blockquote')
+  reason.className = 'reason'
+  reason.textContent = verdict.reason
+
+  const meta = document.createElement('p')
+  meta.className = 'meta'
+  meta.textContent = `Based on ${notes.length} recent Nostr notes.`
+
+  const judgedBy = document.createElement('p')
+  judgedBy.className = 'judged-by'
+  const judgedLabel = document.createElement('span')
+  judgedLabel.className = 'judged-by-label'
+  judgedLabel.textContent = 'Judged by'
+  const judgedModel = document.createElement('span')
+  judgedModel.className = 'judged-by-model'
+  judgedModel.textContent = verdict.model || 'an unnamed model'
+  judgedBy.append(judgedLabel, document.createTextNode(' '), judgedModel)
+
+  const actions = document.createElement('div')
+  actions.className = 'actions'
+
+  const toggle = document.createElement('button')
+  toggle.type = 'button'
+  toggle.className = 'secondary'
+  toggle.textContent = showNotes ? 'HIDE NOTES' : 'VIEW NOTES'
+  toggle.addEventListener('click', () => {
+    if (state.view !== 'result') return
+    setState({ ...state, showNotes: !state.showNotes })
+  })
+
+  const again = document.createElement('button')
+  again.type = 'button'
+  again.className = 'primary'
+  again.textContent = 'JUDGE ANOTHER'
+  again.addEventListener('click', () => setState({ view: 'idle' }))
+
+  actions.append(toggle, again)
+  panel.append(
+    mugshot,
+    subject,
+    stamp,
+    confidence,
+    reason,
+    meta,
+    judgedBy,
+    actions,
+  )
+
+  if (showNotes) {
+    const list = document.createElement('ol')
+    list.className = 'notes'
+    for (const note of notes) {
+      const item = document.createElement('li')
+      item.textContent = note.content
+      list.append(item)
+    }
+    panel.append(list)
+  }
+
+  renderShell(panel)
+}
+
+function render() {
+  updateIpaBanner()
+
+  switch (state.view) {
+    case 'idle':
+      renderShell(renderForm(false))
+      document.querySelector<HTMLInputElement>('#identity')?.focus()
+      break
+    case 'loading':
+      renderLoading(state.message)
+      break
+    case 'error':
+      renderError(state.title, state.detail, state.retryable)
+      break
+    case 'result':
+      renderResult(
+        state.verdict,
+        state.notes,
+        state.profile,
+        state.showNotes,
+      )
+      break
+  }
+
+  updateIpaBanner()
+}
+
+async function judge(raw: string) {
+  lastInput = raw.trim()
+  abortController?.abort()
+  abortController = new AbortController()
+  const signal = abortController.signal
+
+  startLoadingCycle()
+
+  try {
+    const identity = await resolveIdentity(lastInput)
+    const [notes, profile] = await Promise.all([
+      fetchRecentNotes(identity),
+      fetchProfile(identity),
+    ])
+
+    if (notes.length === 0) {
+      stopLoadingCycle()
+      setState({
+        view: 'error',
+        title: 'NO ASSHOLE DATA FOUND',
+        detail:
+          "This account doesn't appear to have enough recent kind 1 posts.",
+        retryable: true,
+      })
+      return
+    }
+
+    if (notes.length < MIN_NOTES) {
+      stopLoadingCycle()
+      setState({
+        view: 'error',
+        title: 'INSUFFICIENT EVIDENCE',
+        detail:
+          'AssholeNet requires at least 3 usable posts before ruining someone\'s reputation.',
+        retryable: false,
+      })
+      return
+    }
+
+    if (state.view === 'loading') {
+      setState({ view: 'loading', message: 'CONSULTING ASSHOLENET...' })
+    }
+
+    const verdict = await requestVerdict(formatNotesForPrompt(notes), signal)
+    stopLoadingCycle()
+    setState({
+      view: 'result',
+      verdict,
+      notes,
+      profile,
+      showNotes: false,
+    })
+  } catch (error) {
+    if (signal.aborted) return
+    stopLoadingCycle()
+
+    if (error instanceof PrivateKeyError) {
+      lastInput = ''
+      setState({
+        view: 'error',
+        title: 'PRIVATE KEY DETECTED',
+        detail:
+          'Never paste an nsec here. Use an npub, nprofile, NIP-05, or pubkey instead.',
+        retryable: false,
+      })
+      return
+    }
+
+    if (error instanceof IdentityError) {
+      setState({
+        view: 'error',
+        title: 'INVALID NOSTR IDENTITY',
+        detail: 'Enter an npub, nprofile, NIP-05 address, or pubkey.',
+        retryable: false,
+      })
+      return
+    }
+
+    if (error instanceof Nip05Error) {
+      setState({
+        view: 'error',
+        title: 'NIP-05 LOOKUP FAILED',
+        detail: error.message,
+        retryable: true,
+      })
+      return
+    }
+
+    if (error instanceof InferenceUnavailableError) {
+      setState({
+        view: 'error',
+        title: 'INFERENCE PROVIDER API NOT DETECTED',
+        detail:
+          'Enable an IPA-compatible extension (Inference Bridge) to perform the analysis, then reload.',
+        retryable: true,
+      })
+      updateIpaBanner()
+      return
+    }
+
+    const message = error instanceof Error ? error.message : String(error)
+    const looksLikeRelay =
+      /websocket|relay|timeout|failed to fetch|network/i.test(message)
+
+    if (looksLikeRelay) {
+      setState({
+        view: 'error',
+        title: 'THE RELAYS ARE BEING DIFFICULT.',
+        detail: 'Try again.',
+        retryable: true,
+      })
+      return
+    }
+
+    setState({
+      view: 'error',
+      title: 'ASSHOLENET MALFUNCTION',
+      detail: 'The machine refuses to pass judgment.',
+      retryable: true,
+    })
+  }
+}
+
+// Extensions inject after load; re-check a few times and on focus.
+render()
+for (const ms of [250, 1000, 2500]) {
+  window.setTimeout(updateIpaBanner, ms)
+}
+window.addEventListener('focus', updateIpaBanner)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') updateIpaBanner()
+})

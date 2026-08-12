@@ -1,0 +1,275 @@
+import { nip19, SimplePool, type Event } from 'nostr-tools'
+import { isNip05, queryProfile } from 'nostr-tools/nip05'
+
+export type NostrIdentity = {
+  pubkey: string
+  relayHints: string[]
+}
+
+export const DEFAULT_RELAYS = [
+  'wss://relay.damus.io',
+  'wss://nos.lol',
+  'wss://relay.primal.net',
+  'wss://relay.nostr.band',
+  'wss://pyramid.fiatjaf.com',
+]
+
+export const FETCH_LIMIT = 20
+export const ANALYZE_LIMIT = 8
+export const MIN_NOTES = 3
+export const RELAY_MAX_WAIT_MS = 4500
+
+const HEX_PUBKEY = /^[0-9a-f]{64}$/i
+const URL_ONLY = /^(https?:\/\/\S+|www\.\S+)$/i
+const MEDIA_EXT = /\.(png|jpe?g|gif|webp|mp4|mov|webm)(\?\S*)?$/i
+
+export class IdentityError extends Error {
+  constructor(message = 'INVALID NOSTR IDENTITY') {
+    super(message)
+    this.name = 'IdentityError'
+  }
+}
+
+export class Nip05Error extends Error {
+  constructor(message = 'NIP-05 NOT FOUND') {
+    super(message)
+    this.name = 'Nip05Error'
+  }
+}
+
+export class PrivateKeyError extends Error {
+  constructor(
+    message = 'That looks like a private key (nsec). Never paste an nsec here.',
+  ) {
+    super(message)
+    this.name = 'PrivateKeyError'
+  }
+}
+
+/** Bech32 nsec tokens, including optional nostr: prefix. */
+const NSEC_TOKEN = /(?:nostr:)?nsec1[02-9ac-hj-np-z]+/gi
+
+export function looksLikePrivateKey(raw: string): boolean {
+  const input = raw.trim()
+  if (!input) return false
+
+  let code = input
+  if (code.toLowerCase().startsWith('nostr:')) {
+    code = code.slice(6)
+  }
+
+  if (/^nsec1[02-9ac-hj-np-z]+$/i.test(code)) return true
+
+  try {
+    return nip19.decode(code).type === 'nsec'
+  } catch {
+    return false
+  }
+}
+
+export function redactPrivateKeys(text: string): string {
+  return text.replace(NSEC_TOKEN, '[REDACTED_NSEC]')
+}
+
+function parseLocalIdentity(raw: string): NostrIdentity | null {
+  const input = raw.trim()
+  if (!input) return null
+
+  if (HEX_PUBKEY.test(input)) {
+    return { pubkey: input.toLowerCase(), relayHints: [] }
+  }
+
+  let code = input
+  if (code.toLowerCase().startsWith('nostr:')) {
+    code = code.slice(6)
+  }
+
+  try {
+    const decoded = nip19.decode(code)
+    if (decoded.type === 'nsec') {
+      throw new PrivateKeyError()
+    }
+    if (decoded.type === 'npub') {
+      return { pubkey: decoded.data, relayHints: [] }
+    }
+    if (decoded.type === 'nprofile') {
+      return {
+        pubkey: decoded.data.pubkey,
+        relayHints: (decoded.data.relays ?? []).filter((r) =>
+          r.startsWith('wss://'),
+        ),
+      }
+    }
+  } catch (error) {
+    if (error instanceof PrivateKeyError) throw error
+    // fall through
+  }
+
+  return null
+}
+
+export async function resolveIdentity(raw: string): Promise<NostrIdentity> {
+  const input = raw.trim()
+  if (!input) throw new IdentityError()
+
+  if (looksLikePrivateKey(input)) {
+    throw new PrivateKeyError()
+  }
+
+  const local = parseLocalIdentity(input)
+  if (local) return local
+
+  if (isNip05(input)) {
+    let profile
+    try {
+      profile = await queryProfile(input)
+    } catch {
+      throw new Nip05Error(
+        'Could not look up that NIP-05 address. Check the spelling or try again.',
+      )
+    }
+
+    if (!profile?.pubkey) {
+      throw new Nip05Error(
+        'No pubkey is registered for that NIP-05 address.',
+      )
+    }
+
+    return {
+      pubkey: profile.pubkey,
+      relayHints: (profile.relays ?? []).filter((r) => r.startsWith('wss://')),
+    }
+  }
+
+  throw new IdentityError()
+}
+
+export function resolveRelays(identity: NostrIdentity): string[] {
+  const seen = new Set<string>()
+  const relays: string[] = []
+  for (const url of [...identity.relayHints, ...DEFAULT_RELAYS]) {
+    if (seen.has(url)) continue
+    seen.add(url)
+    relays.push(url)
+  }
+  return relays
+}
+
+function isUsefulNote(event: Event): boolean {
+  const text = event.content.trim()
+  if (!text) return false
+  if (URL_ONLY.test(text)) return false
+  if (MEDIA_EXT.test(text)) return false
+
+  const withoutUrls = text
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (!withoutUrls) return false
+
+  const words = withoutUrls.split(/\s+/).filter(Boolean)
+  if (words.length <= 2 && withoutUrls.length < 20) return false
+
+  return true
+}
+
+export function selectNotes(events: Event[]): Event[] {
+  const byId = new Map<string, Event>()
+  for (const event of events) {
+    if (!byId.has(event.id)) byId.set(event.id, event)
+  }
+
+  return [...byId.values()]
+    .sort((a, b) => b.created_at - a.created_at)
+    .filter(isUsefulNote)
+    .slice(0, ANALYZE_LIMIT)
+}
+
+export type ProfileInfo = {
+  picture?: string
+  displayName?: string
+}
+
+function parseProfileContent(content: string): ProfileInfo {
+  try {
+    const data = JSON.parse(content) as Record<string, unknown>
+    const picture =
+      typeof data.picture === 'string' ? data.picture.trim() : ''
+    const displayName =
+      (typeof data.display_name === 'string' && data.display_name.trim()) ||
+      (typeof data.name === 'string' && data.name.trim()) ||
+      ''
+
+    return {
+      picture: isSafeHttpUrl(picture) ? picture : undefined,
+      displayName: displayName || undefined,
+    }
+  } catch {
+    return {}
+  }
+}
+
+function isSafeHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' || url.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
+
+export async function fetchRecentNotes(
+  identity: NostrIdentity,
+): Promise<Event[]> {
+  const relays = resolveRelays(identity)
+  const pool = new SimplePool()
+
+  try {
+    const events = await pool.querySync(
+      relays,
+      {
+        kinds: [1],
+        authors: [identity.pubkey],
+        limit: FETCH_LIMIT,
+      },
+      { maxWait: RELAY_MAX_WAIT_MS },
+    )
+    return selectNotes(events)
+  } finally {
+    pool.destroy()
+  }
+}
+
+export async function fetchProfile(
+  identity: NostrIdentity,
+): Promise<ProfileInfo> {
+  const relays = resolveRelays(identity)
+  const pool = new SimplePool()
+
+  try {
+    const event = await pool.get(
+      relays,
+      {
+        kinds: [0],
+        authors: [identity.pubkey],
+      },
+      { maxWait: RELAY_MAX_WAIT_MS },
+    )
+    if (!event) return {}
+    return parseProfileContent(event.content)
+  } catch {
+    return {}
+  } finally {
+    pool.destroy()
+  }
+}
+
+export function formatNotesForPrompt(notes: Event[]): string {
+  return notes
+    .map((note, index) => {
+      const date = new Date(note.created_at * 1000).toISOString().slice(0, 10)
+      return `POST ${index + 1}\n${date}\n${redactPrivateKeys(note.content)}`
+    })
+    .join('\n\n')
+}
