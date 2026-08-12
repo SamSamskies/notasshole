@@ -460,6 +460,10 @@ function render() {
   syncInferenceUi()
 }
 
+function isActiveJudge(signal: AbortSignal): boolean {
+  return !signal.aborted && abortController?.signal === signal
+}
+
 async function judge(raw: string) {
   lastInput = raw.trim()
   abortController?.abort()
@@ -470,10 +474,13 @@ async function judge(raw: string) {
 
   try {
     const identity = await resolveIdentity(lastInput)
+    if (!isActiveJudge(signal)) return
+
     const [notes, profile] = await Promise.all([
       fetchRecentNotes(identity),
       fetchProfile(identity),
     ])
+    if (!isActiveJudge(signal)) return
 
     if (notes.length === 0) {
       stopLoadingCycle()
@@ -504,6 +511,8 @@ async function judge(raw: string) {
     }
 
     const verdict = await requestVerdict(formatNotesForPrompt(notes), signal)
+    if (!isActiveJudge(signal)) return
+
     stopLoadingCycle()
     setState({
       view: 'result',
@@ -513,7 +522,7 @@ async function judge(raw: string) {
       showNotes: false,
     })
   } catch (error) {
-    if (signal.aborted) return
+    if (!isActiveJudge(signal)) return
     stopLoadingCycle()
 
     if (error instanceof PrivateKeyError) {
