@@ -486,7 +486,8 @@ async function judge(raw: string) {
       return
     }
 
-    if (state.view === 'loading') {
+    stopLoadingCycle()
+    if (isActiveJudge(signal) && state.view === 'loading') {
       setState({ view: 'loading', message: 'CONSULTING ASSHOLENET...' })
     }
 
