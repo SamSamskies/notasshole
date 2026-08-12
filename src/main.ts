@@ -158,7 +158,7 @@ const TIP_RELAYS = [
   'wss://relay.damus.io',
   'wss://nos.lol',
   'wss://relay.primal.net',
-  'wss://relay.nostr.band',
+  'wss://pyramid.fiatjaf.com',
 ].join(',')
 
 function renderFooter(): HTMLElement {

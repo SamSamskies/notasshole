@@ -7,11 +7,16 @@ export type NostrIdentity = {
 }
 
 export const DEFAULT_RELAYS = [
-  'wss://relay.damus.io',
   'wss://nos.lol',
   'wss://relay.primal.net',
   'wss://pyramid.fiatjaf.com',
+  'wss://relay.ditto.pub',
+  // Damus is popular but rate-limits aggressively; keep it last among defaults.
+  'wss://relay.damus.io',
 ]
+
+/** Relays that often index profiles / NIP-65 lists even when notes live elsewhere. */
+const DISCOVERY_RELAYS = ['wss://purplepag.es']
 
 export const FETCH_LIMIT = 20
 export const ANALYZE_LIMIT = 8
@@ -143,15 +148,57 @@ export async function resolveIdentity(raw: string): Promise<NostrIdentity> {
   throw new IdentityError()
 }
 
-export function resolveRelays(identity: NostrIdentity): string[] {
+function dedupeRelays(urls: string[]): string[] {
   const seen = new Set<string>()
   const relays: string[] = []
-  for (const url of [...identity.relayHints, ...DEFAULT_RELAYS]) {
-    if (seen.has(url)) continue
+  for (const url of urls) {
+    if (!url.startsWith('wss://') || seen.has(url)) continue
     seen.add(url)
     relays.push(url)
   }
   return relays
+}
+
+export function resolveRelays(identity: NostrIdentity): string[] {
+  return dedupeRelays([...identity.relayHints, ...DEFAULT_RELAYS])
+}
+
+/** NIP-65 kind 10002 — prefer write (outbox) relays for authored notes. */
+export function parseRelayListEvent(event: Event): string[] {
+  const write: string[] = []
+  const read: string[] = []
+
+  for (const tag of event.tags) {
+    if (tag[0] !== 'r' || typeof tag[1] !== 'string') continue
+    const url = tag[1].trim()
+    if (!url.startsWith('wss://')) continue
+
+    if (tag[2] === 'read') read.push(url)
+    else write.push(url)
+  }
+
+  return dedupeRelays([...write, ...read])
+}
+
+async function fetchOutboxRelays(
+  identity: NostrIdentity,
+  knownRelays: string[],
+): Promise<string[]> {
+  const discovery = dedupeRelays([
+    ...knownRelays,
+    ...identity.relayHints,
+    ...DISCOVERY_RELAYS,
+  ])
+
+  const events = await queryRelays(discovery, {
+    kinds: [10002],
+    authors: [identity.pubkey],
+    limit: 1,
+  })
+
+  const latest = events.sort((a, b) => b.created_at - a.created_at)[0]
+  if (!latest) return []
+  return parseRelayListEvent(latest)
 }
 
 function isUsefulNote(event: Event): boolean {
@@ -246,12 +293,26 @@ async function queryRelays(relays: string[], filter: Filter): Promise<Event[]> {
 export async function fetchRecentNotes(
   identity: NostrIdentity,
 ): Promise<Event[]> {
-  const events = await queryRelays(resolveRelays(identity), {
+  const filter: Filter = {
     kinds: [1],
     authors: [identity.pubkey],
     limit: FETCH_LIMIT,
-  })
-  return selectNotes(events)
+  }
+
+  const initialRelays = resolveRelays(identity)
+  const events = await queryRelays(initialRelays, filter)
+  const notes = selectNotes(events)
+  if (notes.length >= MIN_NOTES) return notes
+
+  // Defaults / hints missed (rate limits, sparse replication). Try the user's
+  // NIP-65 outbox relays and merge anything new.
+  const outboxRelays = await fetchOutboxRelays(identity, initialRelays)
+  const tried = new Set(initialRelays)
+  const extraRelays = outboxRelays.filter((url) => !tried.has(url))
+  if (extraRelays.length === 0) return notes
+
+  const more = await queryRelays(extraRelays, filter)
+  return selectNotes([...events, ...more])
 }
 
 export async function fetchProfile(
