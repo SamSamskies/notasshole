@@ -496,7 +496,8 @@ body::before {
   letter-spacing: 0.02em;
 }
 
-.footer-links a {
+.footer-links a,
+.zap-button {
   color: var(--muted);
 }
 
@@ -505,7 +506,8 @@ body::before {
   text-underline-offset: 0.15em;
 }
 
-.footer-icon {
+.footer-icon,
+.zap-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -513,11 +515,13 @@ body::before {
   line-height: 1;
 }
 
-.footer-links a:hover {
+.footer-links a:hover,
+.zap-button:hover {
   color: var(--ink);
 }
 
-.footer-links a:focus-visible {
+.footer-links a:focus-visible,
+.zap-button:focus-visible {
   outline: 2px solid var(--mustard-deep);
   outline-offset: 2px;
 }
@@ -525,6 +529,17 @@ body::before {
 .footer-sep {
   color: var(--line);
   user-select: none;
+}
+
+.zap-button {
+  margin: 0;
+  padding: 0.1rem;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 1.05rem;
+  line-height: 1;
+  cursor: pointer;
 }
 
 .sr-only {

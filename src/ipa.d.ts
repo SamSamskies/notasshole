@@ -33,4 +33,9 @@ type InferenceProvider = {
 
 interface Window {
   inference?: InferenceProvider
+  nostrZap?: {
+    init: (params: Record<string, unknown>) => Promise<unknown>
+    initTarget: (el: Element) => void
+    initTargets: (selector?: string) => void
+  }
 }
