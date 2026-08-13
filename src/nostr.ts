@@ -11,9 +11,10 @@ export const DEFAULT_RELAYS = [
   'wss://relay.primal.net',
   'wss://pyramid.fiatjaf.com',
   'wss://relay.ditto.pub',
-  // Damus is popular but rate-limits aggressively; keep it last among defaults.
-  'wss://relay.damus.io',
 ]
+
+/** Popular but rate-limits aggressively — only hit as a last resort for notes. */
+export const FALLBACK_RELAYS = ['wss://relay.damus.io']
 
 /** Relays that often index profiles / NIP-65 lists even when notes live elsewhere. */
 const DISCOVERY_RELAYS = ['wss://purplepag.es']
@@ -336,20 +337,31 @@ export async function fetchRecentNotes(
     limit: FETCH_LIMIT,
   }
 
-  const initialRelays = resolveRelays(identity)
-  const events = await queryRelays(initialRelays, filter)
-  const notes = selectNotes(events)
+  const tried = new Set<string>()
+  let events: Event[] = []
+
+  const queryUntried = async (relays: string[]) => {
+    const fresh = relays.filter((url) => !tried.has(url))
+    for (const url of fresh) tried.add(url)
+    if (fresh.length === 0) return
+    const more = await queryRelays(fresh, filter)
+    events = [...events, ...more]
+  }
+
+  // 1. Identity hints + default relays (Damus excluded from defaults).
+  await queryUntried(resolveRelays(identity))
+  let notes = selectNotes(events)
   if (notes.length >= MIN_NOTES) return notes
 
-  // Defaults / hints missed (rate limits, sparse replication). Try the user's
-  // NIP-65 outbox relays and merge anything new.
-  const outboxRelays = await fetchOutboxRelays(identity, initialRelays)
-  const tried = new Set(initialRelays)
-  const extraRelays = outboxRelays.filter((url) => !tried.has(url))
-  if (extraRelays.length === 0) return notes
+  // 2. User NIP-65 outbox relays (may include Damus if they publish there).
+  const outboxRelays = await fetchOutboxRelays(identity, [...tried])
+  await queryUntried(outboxRelays)
+  notes = selectNotes(events)
+  if (notes.length >= MIN_NOTES) return notes
 
-  const more = await queryRelays(extraRelays, filter)
-  return selectNotes([...events, ...more])
+  // 3. Last resort: Damus (skipped if already tried via hints/outbox).
+  await queryUntried(FALLBACK_RELAYS)
+  return selectNotes(events)
 }
 
 export async function fetchProfile(
