@@ -32,6 +32,9 @@ body {
 }
 
 body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
   font-family: var(--font-body);
   color: var(--ink);
   background:
@@ -58,15 +61,14 @@ body::before {
 #app {
   position: relative;
   z-index: 1;
-  min-height: 100vh;
+  flex: 1;
   display: flex;
   justify-content: center;
-  padding: 1.25rem 1rem 2rem;
+  padding: 1.25rem 1rem 0;
 }
 
 .shell {
   width: min(34rem, 100%);
-  min-height: calc(100vh - 3.25rem);
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
@@ -479,10 +481,11 @@ body::before {
 }
 
 .site-footer {
+  position: relative;
+  z-index: 1;
   display: flex;
   justify-content: center;
-  margin-top: auto;
-  padding-top: 1.5rem;
+  padding: 1.5rem 1rem 2rem;
 }
 
 .footer-links {
