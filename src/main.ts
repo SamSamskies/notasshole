@@ -195,13 +195,15 @@ function renderFooter(): HTMLElement {
   zap.setAttribute('aria-label', 'Send a zap tip')
   zap.title = 'Zap tip'
   zap.textContent = '⚡'
-  zap.dataset.npub = TIP_NPUB
-  zap.dataset.relays = TIP_RELAYS
+  // Call init() on click instead of initTarget + data-npub. Module scripts run
+  // before DOMContentLoaded, so initTarget would race nostr-zap's boot
+  // initTargets() and bind the same button twice (modal opens twice).
+  zap.addEventListener('click', () => {
+    void window.nostrZap?.init({ npub: TIP_NPUB, relays: TIP_RELAYS })
+  })
 
   nav.append(code, footerSep(), nostr, footerSep(), zap)
   footer.append(nav)
-
-  window.nostrZap?.initTarget(zap)
   return footer
 }
 
