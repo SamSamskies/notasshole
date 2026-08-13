@@ -156,6 +156,15 @@ function renderShell(content: HTMLElement) {
   app.append(shell)
 }
 
+const TIP_NPUB =
+  'npub1vp8fdcyejd4pqjyrjk9sgz68vuhq7pyvnzk8j0ehlljvwgp8n6eqsrnpsw'
+const TIP_RELAYS = [
+  'wss://relay.damus.io',
+  'wss://nos.lol',
+  'wss://relay.primal.net',
+  'wss://pyramid.fiatjaf.com',
+].join(',')
+
 function renderFooter(): HTMLElement {
   const footer = document.createElement('footer')
   footer.className = 'site-footer'
@@ -180,8 +189,19 @@ function renderFooter(): HTMLElement {
   nostr.rel = 'noopener noreferrer'
   nostr.textContent = 'What is Nostr?'
 
-  nav.append(code, footerSep(), nostr)
+  const zap = document.createElement('button')
+  zap.type = 'button'
+  zap.className = 'zap-button'
+  zap.setAttribute('aria-label', 'Send a zap tip')
+  zap.title = 'Zap tip'
+  zap.textContent = '⚡'
+  zap.dataset.npub = TIP_NPUB
+  zap.dataset.relays = TIP_RELAYS
+
+  nav.append(code, footerSep(), nostr, footerSep(), zap)
   footer.append(nav)
+
+  window.nostrZap?.initTarget(zap)
   return footer
 }
 
