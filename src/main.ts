@@ -1,4 +1,3 @@
-import './style.css'
 import type { Event } from 'nostr-tools'
 import {
   hasInference,
