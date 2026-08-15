@@ -78,39 +78,76 @@ export class InferenceUnavailableError extends Error {
 }
 
 export class VerdictParseError extends Error {
-  constructor(message = 'ASSHOLENET MALFUNCTION') {
-    super(message)
+  readonly raw: string
+  readonly causeDetail: string
+
+  constructor(causeDetail: string, raw = '') {
+    super(`ASSHOLENET MALFUNCTION: ${causeDetail}`)
     this.name = 'VerdictParseError'
+    this.causeDetail = causeDetail
+    this.raw = raw
+  }
+}
+
+/** Strip ``` / ```json fences models often wrap around JSON. */
+function stripCodeFences(text: string): string {
+  const trimmed = text.trim()
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)
+  if (fenced?.[1]) return fenced[1].trim()
+
+  const embedded = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
+  if (embedded?.[1]) return embedded[1].trim()
+
+  return trimmed
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim()
+}
+
+function tryParseJson(text: string): unknown | undefined {
+  try {
+    return JSON.parse(text)
+  } catch {
+    const start = text.indexOf('{')
+    const end = text.lastIndexOf('}')
+    if (start < 0 || end <= start) return undefined
+    try {
+      return JSON.parse(text.slice(start, end + 1))
+    } catch {
+      return undefined
+    }
   }
 }
 
 function extractJsonObject(text: string): unknown {
   const trimmed = text.trim()
-  try {
-    return JSON.parse(trimmed)
-  } catch {
-    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)
-    if (fenced?.[1]) {
-      return JSON.parse(fenced[1].trim())
-    }
-    const start = trimmed.indexOf('{')
-    const end = trimmed.lastIndexOf('}')
-    if (start >= 0 && end > start) {
-      return JSON.parse(trimmed.slice(start, end + 1))
-    }
-    throw new VerdictParseError()
+  if (!trimmed) {
+    throw new VerdictParseError('empty model response', text)
   }
+
+  for (const candidate of [trimmed, stripCodeFences(trimmed)]) {
+    const parsed = tryParseJson(candidate)
+    if (parsed !== undefined) return parsed
+  }
+
+  throw new VerdictParseError('no JSON object found in response', text)
 }
 
 export function parseVerdict(raw: string): Verdict {
   let data: unknown
   try {
     data = extractJsonObject(raw)
-  } catch {
-    throw new VerdictParseError()
+  } catch (error) {
+    if (error instanceof VerdictParseError) throw error
+    throw new VerdictParseError('failed to extract JSON', raw)
   }
 
-  if (!data || typeof data !== 'object') throw new VerdictParseError()
+  if (!data || typeof data !== 'object') {
+    throw new VerdictParseError(
+      `parsed value is ${data === null ? 'null' : typeof data}, expected object`,
+      raw,
+    )
+  }
 
   const record = data as Record<string, unknown>
   const verdict = record.verdict
@@ -118,13 +155,22 @@ export function parseVerdict(raw: string): Verdict {
   const reason = record.reason
 
   if (verdict !== 'ASSHOLE' && verdict !== 'NOT ASSHOLE') {
-    throw new VerdictParseError()
+    throw new VerdictParseError(
+      `invalid verdict ${JSON.stringify(verdict)} (expected "ASSHOLE" | "NOT ASSHOLE")`,
+      raw,
+    )
   }
   if (confidence === null) {
-    throw new VerdictParseError()
+    throw new VerdictParseError(
+      `invalid confidence ${JSON.stringify(record.confidence)}`,
+      raw,
+    )
   }
   if (typeof reason !== 'string' || !reason.trim()) {
-    throw new VerdictParseError()
+    throw new VerdictParseError(
+      `invalid reason ${JSON.stringify(reason)}`,
+      raw,
+    )
   }
 
   const clamped = Math.max(50, Math.min(99, Math.round(confidence)))
@@ -181,6 +227,19 @@ export async function requestVerdict(
     }
   }
 
-  const verdict = parseVerdict(content)
-  return { ...verdict, model }
+  try {
+    const verdict = parseVerdict(content)
+    return { ...verdict, model }
+  } catch (error) {
+    if (error instanceof VerdictParseError) {
+      console.warn('[AssholeNet] verdict parse failed', {
+        model: model || '(unknown)',
+        cause: error.causeDetail,
+        raw: error.raw || content,
+      })
+    } else {
+      console.warn('[AssholeNet] unexpected inference error', error)
+    }
+    throw error
+  }
 }

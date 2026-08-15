@@ -5,6 +5,7 @@ import {
   INFERENCE_BRIDGE_URL,
   InferenceUnavailableError,
   requestVerdict,
+  VerdictParseError,
   type Verdict,
 } from './inference'
 import {
@@ -517,6 +518,20 @@ async function judge(raw: string) {
       return
     }
 
+    if (error instanceof VerdictParseError) {
+      console.error('[AssholeNet] malfunction', {
+        cause: error.causeDetail,
+        raw: error.raw,
+      })
+      setState({
+        view: 'error',
+        title: 'ASSHOLENET MALFUNCTION',
+        detail: 'The machine refuses to pass judgment.',
+        retryable: true,
+      })
+      return
+    }
+
     const message = error instanceof Error ? error.message : String(error)
     const looksLikeRelay =
       /websocket|relay|timeout|failed to fetch|network/i.test(message)
@@ -531,6 +546,7 @@ async function judge(raw: string) {
       return
     }
 
+    console.error('[AssholeNet] unexpected judge error', error)
     setState({
       view: 'error',
       title: 'ASSHOLENET MALFUNCTION',
