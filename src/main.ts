@@ -63,6 +63,13 @@ function shuffleMessages(messages: string[]): string[] {
   return copy
 }
 
+function displayModelName(model: string | undefined): string {
+  const name = model?.trim()
+  if (!name) return 'an unnamed asshole model'
+  if (name.toLowerCase() === 'on-device') return 'your on-device asshole model'
+  return name
+}
+
 function setState(next: AppState) {
   state = next
   render()
@@ -332,7 +339,7 @@ function renderResult(
   judgedLabel.textContent = 'Judged by'
   const judgedModel = document.createElement('span')
   judgedModel.className = 'judged-by-model'
-  judgedModel.textContent = verdict.model || 'an unnamed model'
+  judgedModel.textContent = displayModelName(verdict.model)
   judgedBy.append(judgedLabel, document.createTextNode(' '), judgedModel)
 
   const actions = document.createElement('div')
