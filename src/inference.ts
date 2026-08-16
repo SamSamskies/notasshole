@@ -218,6 +218,7 @@ export async function requestVerdict(
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: userContent },
       ],
+      options: { reasoningEffort: 'none' },
       signal,
     })
     content =

@@ -16,7 +16,7 @@
     "vitest": "^4.1.10"
   },
   "dependencies": {
-    "ipa-tools": "0.1.0",
+    "ipa-tools": "0.2.0",
     "nostr-tools": "2.24.1"
   }
 }
