@@ -41,7 +41,7 @@ Static output lands in `dist/`. For Vercel: build command `npm run build`, outpu
 
 - TypeScript + Vite
 - [`nostr-tools`](https://github.com/nbd-wtf/nostr-tools)
-- Inference Provider API (`window.inference`)
+- [`ipa-tools`](https://www.npmjs.com/package/ipa-tools) (Inference Provider API types + helpers)
 
 Dependencies are pinned to exact versions in `package.json`. Prefer `npm ci` so installs follow `package-lock.json`.
 

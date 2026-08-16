@@ -1,3 +1,5 @@
+import { complete, isInferenceAvailable } from 'ipa-tools'
+
 export type Verdict = {
   verdict: 'ASSHOLE' | 'NOT ASSHOLE'
   confidence: number
@@ -63,9 +65,7 @@ export function isSupportedContext(): boolean {
 }
 
 export function hasInference(): boolean {
-  return (
-    typeof window.inference?.request === 'function' && isSupportedContext()
-  )
+  return isInferenceAvailable() && isSupportedContext()
 }
 
 export class InferenceUnavailableError extends Error {
@@ -199,9 +199,9 @@ export async function requestVerdict(
   notesText: string,
   signal?: AbortSignal,
 ): Promise<Verdict> {
-  if (!hasInference() || !window.inference) {
+  if (!hasInference()) {
     throw new InferenceUnavailableError(
-      window.inference
+      isInferenceAvailable()
         ? 'Unsupported context — open over https or localhost.'
         : 'INFERENCE PROVIDER API NOT DETECTED',
     )
@@ -211,23 +211,19 @@ export async function requestVerdict(
   let content = ''
   let model = ''
 
-  for await (const chunk of window.inference.request({
-    method: 'chat',
-    messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: userContent },
-    ],
-    signal,
-  })) {
-    if (chunk.type === 'delta') {
-      content += chunk.content
-    } else if (chunk.type === 'done') {
-      content = chunk.message.content
-      model = chunk.model?.trim() ?? ''
-    }
-  }
-
   try {
+    const done = await complete({
+      method: 'chat',
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userContent },
+      ],
+      signal,
+    })
+    content =
+      typeof done.message.content === 'string' ? done.message.content : ''
+    model = done.model?.trim() ?? ''
+
     const verdict = parseVerdict(content)
     return { ...verdict, model }
   } catch (error) {
