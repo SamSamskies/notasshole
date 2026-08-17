@@ -12,6 +12,12 @@ import {
   VerdictParseError,
   type Verdict,
 } from './inference'
+import { attachIdentityCombobox } from './identity-combobox'
+import {
+  SEARCH_RESULT_LIMIT,
+  searchProfiles,
+  shouldSuggestProfiles,
+} from './profile-search'
 import {
   fetchProfile,
   fetchRecentNotes,
@@ -21,6 +27,7 @@ import {
   Nip05Error,
   PrivateKeyError,
   resolveIdentity,
+  type NostrIdentity,
   type ProfileInfo,
 } from './nostr'
 
@@ -61,6 +68,7 @@ const app = appEl
 let state: AppState = { view: 'idle' }
 let loadingTimer: number | undefined
 let abortController: AbortController | undefined
+let comboboxCleanup: (() => void) | undefined
 let lastInput = ''
 
 function shuffleMessages(messages: string[]): string[] {
@@ -191,7 +199,7 @@ function renderForm(): HTMLElement {
   input.type = 'text'
   input.autocomplete = 'off'
   input.spellcheck = false
-  input.placeholder = 'npub / nprofile / nip05 / pubkey'
+  input.placeholder = 'name, npub, nprofile, nip05, or pubkey'
   input.value = lastInput
   input.required = true
 
@@ -202,6 +210,10 @@ function renderForm(): HTMLElement {
 
   form.append(label, input, button)
   panel.append(form)
+
+  comboboxCleanup?.()
+  comboboxCleanup = attachIdentityCombobox(input)
+
   return panel
 }
 
@@ -445,6 +457,11 @@ function renderResult(
 }
 
 function render() {
+  if (state.view !== 'idle') {
+    comboboxCleanup?.()
+    comboboxCleanup = undefined
+  }
+
   switch (state.view) {
     case 'idle':
       renderShell(renderForm())
@@ -479,6 +496,28 @@ function isActiveJudge(signal: AbortSignal): boolean {
   return !signal.aborted && abortController?.signal === signal
 }
 
+async function resolveSubmittedIdentity(
+  raw: string,
+  signal?: AbortSignal,
+): Promise<NostrIdentity> {
+  const input = raw.trim()
+  if (shouldSuggestProfiles(input)) {
+    const matches = await searchProfiles(input, {
+      limit: SEARCH_RESULT_LIMIT,
+      signal,
+    })
+    if (matches.length === 1) {
+      return resolveIdentity(matches[0].npub)
+    }
+    if (matches.length > 1) {
+      throw new IdentityError(
+        'Multiple profiles match that name — pick one from the suggestions or use npub/NIP-05.',
+      )
+    }
+  }
+  return resolveIdentity(input)
+}
+
 async function judge(raw: string) {
   lastInput = raw.trim()
   abortController?.abort()
@@ -502,7 +541,7 @@ async function judge(raw: string) {
     }
     if (!isActiveJudge(signal)) return
 
-    const identity = await resolveIdentity(lastInput)
+    const identity = await resolveSubmittedIdentity(lastInput, signal)
     if (!isActiveJudge(signal)) return
 
     const [notes, profile] = await Promise.all([
@@ -571,7 +610,10 @@ async function judge(raw: string) {
       setState({
         view: 'error',
         title: 'INVALID NOSTR IDENTITY',
-        detail: 'Enter an npub, nprofile, NIP-05 address, or pubkey.',
+        detail:
+          error.message !== 'INVALID NOSTR IDENTITY'
+            ? error.message
+            : 'Enter a name, npub, nprofile, NIP-05 address, or pubkey.',
         retryable: false,
       })
       return
