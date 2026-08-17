@@ -42,7 +42,7 @@ npx vercel dev
 
 `vercel dev` loads `.env.local`, serves `/api/judge`, and proxies the Vite app. No production deploy is required to try the fallback.
 
-Optional env (see `.env.example`): `GEMINI_MODEL`, `GEMINI_FALLBACK_ENABLED`, generous daily caps.
+Optional env (see `.env.example`): `GEMINI_MODEL` (default `gemma-4-31b-it`), `GEMINI_FALLBACK_ENABLED`, generous daily caps.
 
 ## Build
 

@@ -162,7 +162,7 @@ export function createVercelGeminiBackend(): InferenceBackend {
           const model =
             typeof record.model === 'string' && record.model.trim()
               ? record.model.trim()
-              : 'gemini-3.5-flash'
+              : 'gemma-4-31b-it'
 
           if (!content.trim()) {
             throw makeInferenceError('provider_error', 'empty Gemini response')
