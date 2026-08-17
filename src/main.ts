@@ -12,6 +12,7 @@ import {
   VerdictParseError,
   type Verdict,
 } from './inference'
+import { attachIdentityCombobox } from './identity-combobox'
 import {
   fetchProfile,
   fetchRecentNotes,
@@ -61,6 +62,7 @@ const app = appEl
 let state: AppState = { view: 'idle' }
 let loadingTimer: number | undefined
 let abortController: AbortController | undefined
+let comboboxCleanup: (() => void) | undefined
 let lastInput = ''
 
 function shuffleMessages(messages: string[]): string[] {
@@ -191,7 +193,7 @@ function renderForm(): HTMLElement {
   input.type = 'text'
   input.autocomplete = 'off'
   input.spellcheck = false
-  input.placeholder = 'npub / nprofile / nip05 / pubkey'
+  input.placeholder = 'name, npub, nprofile, nip05, or pubkey'
   input.value = lastInput
   input.required = true
 
@@ -202,6 +204,10 @@ function renderForm(): HTMLElement {
 
   form.append(label, input, button)
   panel.append(form)
+
+  comboboxCleanup?.()
+  comboboxCleanup = attachIdentityCombobox(input)
+
   return panel
 }
 
@@ -445,6 +451,11 @@ function renderResult(
 }
 
 function render() {
+  if (state.view !== 'idle') {
+    comboboxCleanup?.()
+    comboboxCleanup = undefined
+  }
+
   switch (state.view) {
     case 'idle':
       renderShell(renderForm())

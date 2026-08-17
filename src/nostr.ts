@@ -238,7 +238,11 @@ export type ProfileInfo = {
   displayName?: string
 }
 
-function parseProfileContent(content: string): ProfileInfo {
+export type Kind0Profile = ProfileInfo & {
+  nip05?: string
+}
+
+function parseProfileContent(content: string): Kind0Profile {
   try {
     const data = JSON.parse(content) as Record<string, unknown>
     const picture =
@@ -247,14 +251,21 @@ function parseProfileContent(content: string): ProfileInfo {
       (typeof data.display_name === 'string' && data.display_name.trim()) ||
       (typeof data.name === 'string' && data.name.trim()) ||
       ''
+    const nip05 =
+      typeof data.nip05 === 'string' ? data.nip05.trim() : ''
 
     return {
       picture: isSafeHttpUrl(picture) ? picture : undefined,
       displayName: displayName || undefined,
+      nip05: nip05 || undefined,
     }
   } catch {
     return {}
   }
+}
+
+export function parseKind0Profile(event: Event): Kind0Profile {
+  return parseProfileContent(event.content)
 }
 
 function isSafeHttpUrl(value: string): boolean {
@@ -375,7 +386,7 @@ export async function fetchProfile(
     })
     const event = events.sort((a, b) => b.created_at - a.created_at)[0]
     if (!event) return {}
-    return parseProfileContent(event.content)
+    return parseKind0Profile(event)
   } catch {
     return {}
   }
