@@ -36,8 +36,8 @@ type DayBucket = { day: string; count: number }
 const DEFAULT_MODEL = 'gemma-4-31b-it'
 const MAX_BODY_BYTES = 100_000
 const MAX_PROMPT_CHARS = 60_000
-/** Per-browser daily cap. Google free-tier RPD is the shared backstop. */
-const DEFAULT_CLIENT_DAILY = 20
+/** Per-browser daily cap (spam blunt). Google free-tier RPD is the shared backstop. */
+const DEFAULT_CLIENT_DAILY = 50
 
 const clientBuckets = new Map<string, DayBucket>()
 

@@ -9,7 +9,7 @@ export const GEMINI_CLIENT_TOKEN_KEY = 'assholenet.clientToken'
 export const GEMINI_BACKEND_ID = 'vercelGemini'
 
 /** Align with server DEFAULT_CLIENT_DAILY in api/judge.ts. */
-const CLIENT_SOFT_DAILY = 20
+const CLIENT_SOFT_DAILY = 50
 const CLIENT_SOFT_COUNT_KEY = 'assholenet.clientSoftCount'
 
 export function hasGeminiConsent(): boolean {
