@@ -1,8 +1,12 @@
 import type { Event } from 'nostr-tools'
+import { setGeminiConsent } from './gemini-backend'
 import {
-  hasInference,
+  canRequestVerdict,
+  ClientLimitError,
   INFERENCE_BRIDGE_URL,
   InferenceUnavailableError,
+  GeminiConsentRequiredError,
+  QuotaExhaustedError,
   requestVerdict,
   VerdictParseError,
   type Verdict,
@@ -36,7 +40,11 @@ const INFERENCE_LOADING_MESSAGES = [
 type AppState =
   | { view: 'idle' }
   | { view: 'loading'; message: string }
-  | { view: 'error'; title: string; detail: string; retryable: boolean }
+  | {
+      view: 'consent'
+      resolve: (ok: boolean) => void
+    }
+  | { view: 'error'; title: string; detail: string; retryable: boolean; bridgeCta?: boolean }
   | {
       view: 'result'
       verdict: Verdict
@@ -86,7 +94,18 @@ function startLoadingCycle(messages: string[]) {
   stopLoadingCycle()
   const shuffled = shuffleMessages(messages)
   let index = 0
-  setState({ view: 'loading', message: shuffled[0] })
+  const message = shuffled[0]
+
+  // Already on the loading screen: swap copy in place so the rise animation
+  // does not replay when moving from relay fetch → inference.
+  if (state.view === 'loading') {
+    state = { view: 'loading', message }
+    const status = document.querySelector('.loading-status')
+    if (status) status.textContent = message
+  } else {
+    setState({ view: 'loading', message })
+  }
+
   loadingTimer = window.setInterval(() => {
     index = (index + 1) % shuffled.length
     if (state.view !== 'loading') return
@@ -96,40 +115,18 @@ function startLoadingCycle(messages: string[]) {
   }, 1600)
 }
 
-function syncInferenceUi() {
-  const available = hasInference()
-
-  const banner = document.querySelector<HTMLElement>('#ipa-banner')
-  if (banner) banner.hidden = available
-
-  if (state.view !== 'idle') return
-
-  const input = document.querySelector<HTMLInputElement>('#identity')
-  const button = document.querySelector<HTMLButtonElement>(
-    '.judge-form button[type="submit"]',
-  )
-  if (input) input.disabled = !available
-  if (button) button.disabled = !available
-}
-
-function renderBanner(): HTMLElement {
-  const banner = document.createElement('aside')
-  banner.id = 'ipa-banner'
-  banner.className = 'ipa-banner'
-  banner.hidden = hasInference()
-
-  const text = document.createElement('p')
-  text.textContent =
-    'Inference Provider API not detected. Install Inference Bridge to run AssholeNet.'
-
-  const link = document.createElement('a')
-  link.href = INFERENCE_BRIDGE_URL
-  link.target = '_blank'
-  link.rel = 'noopener noreferrer'
-  link.textContent = 'Get Inference Bridge'
-
-  banner.append(text, link)
-  return banner
+function askGeminiConsent(): Promise<boolean> {
+  return new Promise((resolve) => {
+    stopLoadingCycle()
+    setState({
+      view: 'consent',
+      resolve: (ok) => {
+        setGeminiConsent(ok)
+        if (ok) startLoadingCycle(INFERENCE_LOADING_MESSAGES)
+        resolve(ok)
+      },
+    })
+  })
 }
 
 function renderShell(content: HTMLElement) {
@@ -137,8 +134,6 @@ function renderShell(content: HTMLElement) {
 
   const shell = document.createElement('div')
   shell.className = 'shell'
-
-  shell.append(renderBanner())
 
   const header = document.createElement('header')
   header.className = 'hero'
@@ -163,7 +158,7 @@ function renderShell(content: HTMLElement) {
   app.append(shell)
 }
 
-function renderForm(disabled = false): HTMLElement {
+function renderForm(): HTMLElement {
   const panel = document.createElement('section')
   panel.className = 'panel'
 
@@ -188,18 +183,56 @@ function renderForm(disabled = false): HTMLElement {
   input.spellcheck = false
   input.placeholder = 'npub / nprofile / nip05 / pubkey'
   input.value = lastInput
-  input.disabled = disabled
   input.required = true
 
   const button = document.createElement('button')
   button.type = 'submit'
   button.className = 'primary'
   button.textContent = 'JUDGE'
-  button.disabled = disabled
 
   form.append(label, input, button)
   panel.append(form)
   return panel
+}
+
+function renderConsent(resolve: (ok: boolean) => void) {
+  const panel = document.createElement('section')
+  panel.className = 'panel consent-panel'
+
+  const heading = document.createElement('h2')
+  heading.className = 'error-title'
+  heading.textContent = 'SEND THIS TO GOOGLE?'
+
+  const body = document.createElement('p')
+  body.className = 'error-detail'
+  body.textContent =
+    'Inference Bridge is not here. We can still judge, but only if you are cool sending this asshole request to Google via our backend. Free-tier Gemini may use prompts to improve Google products. Inference Bridge keeps notes with your own provider instead.'
+
+  const actions = document.createElement('div')
+  actions.className = 'actions'
+
+  const send = document.createElement('button')
+  send.type = 'button'
+  send.className = 'primary'
+  send.textContent = 'JUDGE WITH GOOGLE'
+  send.addEventListener('click', () => resolve(true))
+
+  const bridge = document.createElement('a')
+  bridge.className = 'secondary consent-bridge'
+  bridge.href = INFERENCE_BRIDGE_URL
+  bridge.target = '_blank'
+  bridge.rel = 'noopener noreferrer'
+  bridge.textContent = 'GET INFERENCE BRIDGE INSTEAD'
+
+  const cancel = document.createElement('button')
+  cancel.type = 'button'
+  cancel.className = 'secondary'
+  cancel.textContent = 'CANCEL'
+  cancel.addEventListener('click', () => resolve(false))
+
+  actions.append(send, bridge, cancel)
+  panel.append(heading, body, actions)
+  renderShell(panel)
 }
 
 function renderLoading(message: string) {
@@ -221,7 +254,12 @@ function renderLoading(message: string) {
   renderShell(panel)
 }
 
-function renderError(title: string, detail: string, retryable: boolean) {
+function renderError(
+  title: string,
+  detail: string,
+  retryable: boolean,
+  bridgeCta = false,
+) {
   const panel = document.createElement('section')
   panel.className = 'panel error-panel'
 
@@ -235,6 +273,16 @@ function renderError(title: string, detail: string, retryable: boolean) {
 
   const actions = document.createElement('div')
   actions.className = 'actions'
+
+  if (bridgeCta) {
+    const bridge = document.createElement('a')
+    bridge.className = 'primary consent-bridge'
+    bridge.href = INFERENCE_BRIDGE_URL
+    bridge.target = '_blank'
+    bridge.rel = 'noopener noreferrer'
+    bridge.textContent = 'GET INFERENCE BRIDGE'
+    actions.append(bridge)
+  }
 
   if (retryable) {
     const retry = document.createElement('button')
@@ -389,14 +437,22 @@ function renderResult(
 function render() {
   switch (state.view) {
     case 'idle':
-      renderShell(renderForm(!hasInference()))
+      renderShell(renderForm())
       document.querySelector<HTMLInputElement>('#identity')?.focus()
       break
     case 'loading':
       renderLoading(state.message)
       break
+    case 'consent':
+      renderConsent(state.resolve)
+      break
     case 'error':
-      renderError(state.title, state.detail, state.retryable)
+      renderError(
+        state.title,
+        state.detail,
+        state.retryable,
+        state.bridgeCta,
+      )
       break
     case 'result':
       renderResult(
@@ -407,8 +463,6 @@ function render() {
       )
       break
   }
-
-  syncInferenceUi()
 }
 
 function isActiveJudge(signal: AbortSignal): boolean {
@@ -424,6 +478,20 @@ async function judge(raw: string) {
   startLoadingCycle(FETCH_LOADING_MESSAGES)
 
   try {
+    if (!(await canRequestVerdict())) {
+      stopLoadingCycle()
+      setState({
+        view: 'error',
+        title: 'NO JUDGE AVAILABLE',
+        detail:
+          'No inference extension and no free Google fallback right now. Install Inference Bridge to keep judging with your own provider.',
+        retryable: true,
+        bridgeCta: true,
+      })
+      return
+    }
+    if (!isActiveJudge(signal)) return
+
     const identity = await resolveIdentity(lastInput)
     if (!isActiveJudge(signal)) return
 
@@ -459,7 +527,10 @@ async function judge(raw: string) {
 
     startLoadingCycle(INFERENCE_LOADING_MESSAGES)
 
-    const verdict = await requestVerdict(formatNotesForPrompt(notes), signal)
+    const verdict = await requestVerdict(formatNotesForPrompt(notes), {
+      signal,
+      ensureGeminiConsent: askGeminiConsent,
+    })
     if (!isActiveJudge(signal)) return
 
     stopLoadingCycle()
@@ -506,13 +577,43 @@ async function judge(raw: string) {
       return
     }
 
+    if (error instanceof GeminiConsentRequiredError) {
+      setState({ view: 'idle' })
+      return
+    }
+
+    if (error instanceof ClientLimitError) {
+      setState({
+        view: 'error',
+        title: 'EASY, JUDGE',
+        detail:
+          'This browser has used up its free Google judgments for today. Install Inference Bridge to keep judging with your own provider and model.',
+        retryable: false,
+        bridgeCta: true,
+      })
+      return
+    }
+
+    if (error instanceof QuotaExhaustedError) {
+      setState({
+        view: 'error',
+        title: 'NO MORE FREE ASSHOLE DETECTIONS FOR TODAY',
+        detail:
+          'The shared Gemini free tier is cooked. Install Inference Bridge to keep judging with your own provider and model.',
+        retryable: false,
+        bridgeCta: true,
+      })
+      return
+    }
+
     if (error instanceof InferenceUnavailableError) {
       setState({
         view: 'error',
-        title: 'INFERENCE PROVIDER API NOT DETECTED',
+        title: 'NO JUDGE AVAILABLE',
         detail:
-          'Enable an IPA-compatible extension (Inference Bridge) to perform the analysis, then reload.',
+          'No inference extension and no free Google fallback right now. Install Inference Bridge to keep judging with your own provider.',
         retryable: true,
+        bridgeCta: true,
       })
       return
     }
@@ -555,12 +656,4 @@ async function judge(raw: string) {
   }
 }
 
-// Extensions inject after load; re-check a few times and on focus.
 render()
-for (const ms of [250, 1000, 2500]) {
-  window.setTimeout(syncInferenceUi, ms)
-}
-window.addEventListener('focus', syncInferenceUi)
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') syncInferenceUi()
-})

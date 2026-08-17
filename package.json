@@ -5,18 +5,21 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:vercel": "vercel dev",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "devDependencies": {
+    "@vercel/node": "5.10.1",
     "typescript": "6.0.3",
+    "vercel": "59.1.3",
     "vite": "8.2.1",
-    "vitest": "^4.1.10"
+    "vitest": "4.1.10"
   },
   "dependencies": {
-    "ipa-tools": "0.2.0",
+    "ipa-tools": "0.3.1",
     "nostr-tools": "2.24.1"
   }
 }
