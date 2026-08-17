@@ -10,11 +10,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import {
-  classifyGemini429,
-  collectQuotaIds,
-  type GeminiQuotaKind,
-} from '../src/gemini-quota'
+
+type GeminiQuotaKind = 'daily' | 'rate'
 
 type JudgeMessage = {
   role: string
@@ -462,6 +459,59 @@ function thinkingConfigForEffort(
     return { thinkingBudget: -1 }
   }
   return { thinkingLevel: effort === 'none' ? 'minimal' : effort }
+}
+
+/** Keep in sync with src/gemini-quota.ts — Vercel does not ship that file with this function. */
+function classifyGemini429(body: unknown): GeminiQuotaKind {
+  const text = collectStrings(body).join(' ')
+  if (/PerDay|per_day|per day|RequestsPerDay|_rpd\b/i.test(text)) return 'daily'
+  return 'rate'
+}
+
+function collectQuotaIds(value: unknown): string[] {
+  const ids: string[] = []
+  walkObjects(value, (record) => {
+    if (typeof record.quotaId === 'string' && record.quotaId.trim()) {
+      ids.push(record.quotaId)
+    }
+  })
+  return ids
+}
+
+function collectStrings(value: unknown): string[] {
+  const parts: string[] = []
+  const visit = (node: unknown): void => {
+    if (typeof node === 'string') {
+      parts.push(node)
+      return
+    }
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item)
+      return
+    }
+    if (node && typeof node === 'object') {
+      for (const child of Object.values(node as Record<string, unknown>)) {
+        visit(child)
+      }
+    }
+  }
+  visit(value)
+  return parts
+}
+
+function walkObjects(
+  value: unknown,
+  visit: (record: Record<string, unknown>) => void,
+): void {
+  if (Array.isArray(value)) {
+    for (const item of value) walkObjects(item, visit)
+    return
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    visit(record)
+    for (const child of Object.values(record)) walkObjects(child, visit)
+  }
 }
 
 function geminiErrorMessage(value: unknown): string | undefined {

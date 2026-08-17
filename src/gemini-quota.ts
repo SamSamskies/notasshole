@@ -3,6 +3,7 @@ export type GeminiQuotaKind = 'daily' | 'rate'
 /**
  * Daily RPD vs short-window RPM/TPM/concurrency.
  * Unknown 429s are treated as rate — that is the usual free-tier hit.
+ * Duplicated in api/judge.ts because Vercel does not bundle this file into the function.
  */
 export function classifyGemini429(body: unknown): GeminiQuotaKind {
   const text = collectStrings(body).join(' ')
