@@ -32,12 +32,12 @@ type JudgeBody = {
 
 type DayBucket = { day: string; count: number }
 
-/** 2.5 Flash returns 404 for many new free-tier keys; 3.5 Flash works. */
-const DEFAULT_MODEL = 'gemini-3.5-flash'
+/** Free-tier 3.5 Flash is 5 RPM / 20 RPD; Gemma 4 31B is ~30 RPM / 14.4K RPD. */
+const DEFAULT_MODEL = 'gemma-4-31b-it'
 const MAX_BODY_BYTES = 100_000
 const MAX_PROMPT_CHARS = 60_000
-/** Per-browser daily cap. Google free-tier RPD is the shared backstop. */
-const DEFAULT_CLIENT_DAILY = 20
+/** Per-browser daily cap (spam blunt). Google free-tier RPD is the shared backstop. */
+const DEFAULT_CLIENT_DAILY = 50
 
 const clientBuckets = new Map<string, DayBucket>()
 
@@ -457,6 +457,10 @@ function thinkingConfigForEffort(
     if (effort === 'low') return { thinkingBudget: 1024 }
     if (effort === 'medium') return { thinkingBudget: 8192 }
     return { thinkingBudget: -1 }
+  }
+  // Gemma 4 only accepts high (on) or minimal (off).
+  if (/^gemma-/i.test(model)) {
+    return { thinkingLevel: effort === 'none' ? 'minimal' : 'high' }
   }
   return { thinkingLevel: effort === 'none' ? 'minimal' : effort }
 }
