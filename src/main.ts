@@ -609,8 +609,9 @@ async function judge(raw: string) {
         view: 'error',
         title: 'TOO MANY JUDGMENTS AT ONCE',
         detail:
-          'Gemini needs a minute. Try again in a little while.',
+          'Gemini needs a minute. Try again in a little while, or install Inference Bridge to keep judging with your own provider and model.',
         retryable: true,
+        bridgeCta: true,
       })
       return
     }
