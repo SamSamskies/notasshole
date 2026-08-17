@@ -7,6 +7,7 @@ import {
   InferenceUnavailableError,
   GeminiConsentRequiredError,
   QuotaExhaustedError,
+  RateLimitedError,
   requestVerdict,
   VerdictParseError,
   type Verdict,
@@ -603,12 +604,23 @@ async function judge(raw: string) {
       return
     }
 
+    if (error instanceof RateLimitedError) {
+      setState({
+        view: 'error',
+        title: 'TOO MANY JUDGMENTS AT ONCE',
+        detail:
+          'Gemini needs a minute. Try again in a little while.',
+        retryable: true,
+      })
+      return
+    }
+
     if (error instanceof QuotaExhaustedError) {
       setState({
         view: 'error',
         title: 'NO MORE FREE ASSHOLE DETECTIONS FOR TODAY',
         detail:
-          'The shared Gemini free tier is cooked. Install Inference Bridge to keep judging with your own provider and model.',
+          'Gemini is cooked. Install Inference Bridge to keep judging with your own provider and model.',
         retryable: false,
         bridgeCta: true,
       })
