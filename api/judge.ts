@@ -169,6 +169,7 @@ function extractPrompt(messages: JudgeMessage[]): {
   let system = ''
   const userParts: string[] = []
   for (const msg of messages) {
+    if (msg == null || typeof msg !== 'object') continue
     const content = typeof msg.content === 'string' ? msg.content : ''
     if (!content.trim()) continue
     if (msg.role === 'system') {
