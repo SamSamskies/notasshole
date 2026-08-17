@@ -143,16 +143,21 @@ function applyCors(res: VercelResponse, origin: string | null): void {
   }
 }
 
-function bumpClient(key: string, limit: number): boolean {
+function clientUnderLimit(key: string, limit: number): boolean {
+  const day = todayUtc()
+  const cur = clientBuckets.get(key)
+  if (!cur || cur.day !== day) return true
+  return cur.count < limit
+}
+
+function bumpClient(key: string): void {
   const day = todayUtc()
   const cur = clientBuckets.get(key)
   if (!cur || cur.day !== day) {
     clientBuckets.set(key, { day, count: 1 })
-    return true
+    return
   }
-  if (cur.count >= limit) return false
   cur.count += 1
-  return true
 }
 
 function requestOrigin(req: VercelRequest): string | null {
@@ -292,7 +297,7 @@ export default async function handler(
   }
 
   const clientLimit = envInt('GEMINI_CLIENT_DAILY_LIMIT', DEFAULT_CLIENT_DAILY)
-  if (!bumpClient(clientId, clientLimit)) {
+  if (!clientUnderLimit(clientId, clientLimit)) {
     res.status(429).json({ error: 'client_limit' })
     return
   }
@@ -381,6 +386,7 @@ export default async function handler(
     return
   }
 
+  bumpClient(clientId)
   res.status(200).json({ content: text, model })
 }
 
