@@ -298,6 +298,23 @@ a.primary.consent-bridge {
   box-sizing: border-box;
 }
 
+a.consent-alt {
+  display: inline-block;
+  margin: 0.9rem auto 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  text-underline-offset: 0.18em;
+}
+
+a.consent-alt:hover {
+  color: var(--ink);
+}
+
+a.consent-alt:focus-visible {
+  outline: 2px solid var(--mustard-deep);
+  outline-offset: 2px;
+}
+
 .error-title {
   margin: 0;
   font-family: var(--font-display);
@@ -453,6 +470,10 @@ a.primary.consent-bridge {
   margin-top: 1.25rem;
 }
 
+.shell > .actions {
+  margin-top: 0;
+}
+
 .notes {
   margin: 1.25rem 0 0;
   padding: 0;
@@ -500,6 +521,12 @@ a.primary.consent-bridge {
   color: var(--muted);
   font-size: 0.82rem;
   line-height: 1.4;
+}
+
+.result-panel .disclaimer {
+  margin-top: 1.15rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line);
 }
 
 .site-footer {
@@ -582,6 +609,10 @@ a.primary.consent-bridge {
 @media (max-width: 480px) {
   .actions {
     flex-direction: column;
+  }
+
+  .shell > .actions {
+    flex-direction: column-reverse;
   }
 
   .actions .primary,

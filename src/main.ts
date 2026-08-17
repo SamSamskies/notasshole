@@ -129,7 +129,20 @@ function askGeminiConsent(): Promise<boolean> {
   })
 }
 
-function renderShell(content: HTMLElement) {
+const DISCLAIMER_TEXT =
+  'For entertainment only. Results are AI-generated jokes based on public Nostr posts. Powered by highly questionable science.'
+
+function createDisclaimer(): HTMLParagraphElement {
+  const disclaimer = document.createElement('p')
+  disclaimer.className = 'disclaimer'
+  disclaimer.textContent = DISCLAIMER_TEXT
+  return disclaimer
+}
+
+function renderShell(
+  content: HTMLElement,
+  options?: { after?: HTMLElement; disclaimer?: boolean },
+) {
   app.replaceChildren()
 
   const shell = document.createElement('div')
@@ -148,13 +161,9 @@ function renderShell(content: HTMLElement) {
     'Advanced AI-powered Nostr personality analysis.'
 
   header.append(brand, tagline)
-
-  const disclaimer = document.createElement('p')
-  disclaimer.className = 'disclaimer'
-  disclaimer.textContent =
-    'For entertainment only. Results are AI-generated jokes based on public Nostr posts. Powered by highly questionable science.'
-
-  shell.append(header, content, disclaimer)
+  shell.append(header, content)
+  if (options?.after) shell.append(options.after)
+  if (options?.disclaimer !== false) shell.append(createDisclaimer())
   app.append(shell)
 }
 
@@ -206,7 +215,7 @@ function renderConsent(resolve: (ok: boolean) => void) {
   const body = document.createElement('p')
   body.className = 'error-detail'
   body.textContent =
-    'Inference Bridge is not here. We can still judge, but only if you are cool sending this asshole request to Google via our backend. Free-tier Gemini may use prompts to improve Google products. Inference Bridge keeps notes with your own provider instead.'
+    'Inference Bridge is not here. We can still judge, but only if you are cool sending this asshole request to Google. Free-tier Gemini may use prompts to improve Google products. Inference Bridge keeps notes with your own provider instead.'
 
   const actions = document.createElement('div')
   actions.className = 'actions'
@@ -217,21 +226,21 @@ function renderConsent(resolve: (ok: boolean) => void) {
   send.textContent = 'JUDGE WITH GOOGLE'
   send.addEventListener('click', () => resolve(true))
 
-  const bridge = document.createElement('a')
-  bridge.className = 'secondary consent-bridge'
-  bridge.href = INFERENCE_BRIDGE_URL
-  bridge.target = '_blank'
-  bridge.rel = 'noopener noreferrer'
-  bridge.textContent = 'GET INFERENCE BRIDGE INSTEAD'
-
   const cancel = document.createElement('button')
   cancel.type = 'button'
   cancel.className = 'secondary'
   cancel.textContent = 'CANCEL'
   cancel.addEventListener('click', () => resolve(false))
 
-  actions.append(send, bridge, cancel)
-  panel.append(heading, body, actions)
+  const bridge = document.createElement('a')
+  bridge.className = 'consent-alt'
+  bridge.href = INFERENCE_BRIDGE_URL
+  bridge.target = '_blank'
+  bridge.rel = 'noopener noreferrer'
+  bridge.textContent = 'Get Inference Bridge instead'
+
+  actions.append(send, cancel)
+  panel.append(heading, body, actions, bridge)
   renderShell(panel)
 }
 
@@ -417,7 +426,7 @@ function renderResult(
     reason,
     meta,
     judgedBy,
-    actions,
+    createDisclaimer(),
   )
 
   if (showNotes) {
@@ -431,7 +440,7 @@ function renderResult(
     panel.append(list)
   }
 
-  renderShell(panel)
+  renderShell(panel, { after: actions, disclaimer: false })
 }
 
 function render() {
