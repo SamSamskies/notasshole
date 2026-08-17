@@ -456,13 +456,12 @@ function extractGeminiText(data: unknown): string | null {
   if (!Array.isArray(parts)) return null
   const chunks: string[] = []
   for (const part of parts) {
-    if (
-      part &&
-      typeof part === 'object' &&
-      typeof (part as { text?: unknown }).text === 'string'
-    ) {
-      chunks.push((part as { text: string }).text)
-    }
+    if (!part || typeof part !== 'object') continue
+    const record = part as { text?: unknown; thought?: unknown }
+    // Thinking models emit reasoning parts with thought: true alongside the
+    // JSON answer. Concatenating them yields invalid JSON for parseVerdict.
+    if (record.thought === true) continue
+    if (typeof record.text === 'string') chunks.push(record.text)
   }
   const joined = chunks.join('').trim()
   return joined || null
