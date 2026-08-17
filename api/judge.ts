@@ -162,7 +162,7 @@ function requestOrigin(req: VercelRequest): string | null {
 
 function originAllowed(req: VercelRequest): boolean {
   const origin = requestOrigin(req)
-  if (!origin) return true
+  if (!origin) return false
   return allowedOrigins().has(origin)
 }
 
