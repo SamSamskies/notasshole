@@ -13,7 +13,11 @@ import {
   type Verdict,
 } from './inference'
 import { attachIdentityCombobox } from './identity-combobox'
-import { searchProfiles, shouldSuggestProfiles } from './profile-search'
+import {
+  SEARCH_RESULT_LIMIT,
+  searchProfiles,
+  shouldSuggestProfiles,
+} from './profile-search'
 import {
   fetchProfile,
   fetchRecentNotes,
@@ -498,7 +502,10 @@ async function resolveSubmittedIdentity(
 ): Promise<NostrIdentity> {
   const input = raw.trim()
   if (shouldSuggestProfiles(input)) {
-    const matches = await searchProfiles(input, { limit: 2, signal })
+    const matches = await searchProfiles(input, {
+      limit: SEARCH_RESULT_LIMIT,
+      signal,
+    })
     if (matches.length === 1) {
       return resolveIdentity(matches[0].npub)
     }
