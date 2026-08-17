@@ -215,7 +215,7 @@ function renderConsent(resolve: (ok: boolean) => void) {
   const body = document.createElement('p')
   body.className = 'error-detail'
   body.textContent =
-    'Inference Bridge is not here. We can still judge, but only if you are cool sending this asshole request to Google. Free-tier Gemini may use prompts to improve Google products. Inference Bridge keeps notes with your own provider instead.'
+    'Inference Bridge is not here. We can still judge, but only if you are cool sending this asshole request to Google. Gemini may use prompts to improve Google products. Inference Bridge keeps notes with your own provider instead.'
 
   const actions = document.createElement('div')
   actions.className = 'actions'
