@@ -81,6 +81,10 @@
   box-sizing: border-box;
 }
 
+html {
+  overflow-x: hidden;
+}
+
 html,
 body {
   margin: 0;
@@ -121,10 +125,13 @@ body::before {
   display: flex;
   justify-content: center;
   padding: 1.25rem 1rem 0;
+  min-width: 0;
 }
 
 .shell {
   width: min(34rem, 100%);
+  max-width: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
@@ -151,10 +158,11 @@ body::before {
   margin: 0;
   font-family: var(--font-display);
   font-weight: 800;
-  font-size: clamp(2.2rem, 8vw, 3.35rem);
+  font-size: clamp(1.55rem, 8vw, 3.35rem);
   letter-spacing: -0.045em;
   line-height: 0.95;
   text-transform: uppercase;
+  overflow-wrap: break-word;
 }
 
 .tagline {
@@ -170,6 +178,8 @@ body::before {
   border-radius: 16px;
   padding: 1.25rem;
   box-shadow: var(--shadow);
+  max-width: 100%;
+  min-width: 0;
 }
 
 .judge-form {
@@ -375,13 +385,14 @@ a.consent-alt:focus-visible {
 
 .stamp {
   display: inline-block;
+  max-width: 100%;
   margin: 0.15rem auto 0;
-  padding: 0.55rem 1rem;
+  padding: 0.55rem 0.75rem;
   font-family: var(--font-display);
   font-weight: 800;
-  font-size: clamp(1.6rem, 6vw, 2.2rem);
+  font-size: clamp(1.15rem, 5.2vw, 2.2rem);
   letter-spacing: -0.03em;
-  line-height: 1;
+  line-height: 1.05;
   border: 3px solid currentColor;
   border-radius: 6px;
   transform: rotate(-2.5deg);
@@ -397,6 +408,7 @@ a.consent-alt:focus-visible {
   color: var(--ok);
   background: var(--ok-soft);
   transform: rotate(2deg);
+  animation-name: stamp-in-good;
 }
 
 @keyframes stamp-in {
@@ -406,6 +418,18 @@ a.consent-alt:focus-visible {
   }
   to {
     opacity: 1;
+    transform: rotate(-2.5deg);
+  }
+}
+
+@keyframes stamp-in-good {
+  from {
+    opacity: 0;
+    transform: scale(1.35) rotate(12deg);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(2deg);
   }
 }
 
@@ -630,6 +654,7 @@ a.consent-alt:focus-visible {
   }
 
   .stamp,
+  .stamp.bad,
   .stamp.good {
     transform: none;
   }
