@@ -160,6 +160,8 @@ export function attachIdentityCombobox(input: HTMLInputElement): () => void {
     searchAbort = controller
     const generation = ++searchGeneration
 
+    suggestions = []
+    clearActiveOption()
     listbox.replaceChildren()
     const loading = document.createElement('li')
     loading.className = 'suggest-status'
@@ -185,6 +187,18 @@ export function attachIdentityCombobox(input: HTMLInputElement): () => void {
   const onInput = () => scheduleSearch()
   input.addEventListener('input', onInput)
   cleanupFns.push(() => input.removeEventListener('input', onInput))
+
+  const onFormSubmit = () => {
+    if (listbox.hidden || activeIndex < 0) return
+    const suggestion = suggestions[activeIndex]
+    if (!suggestion) return
+    input.value = suggestionValue(suggestion)
+    closeSuggestions()
+  }
+  input.form?.addEventListener('submit', onFormSubmit, { capture: true })
+  cleanupFns.push(() =>
+    input.form?.removeEventListener('submit', onFormSubmit, { capture: true }),
+  )
 
   const onKeyDown = (event: KeyboardEvent) => {
     if (listbox.hidden) return
