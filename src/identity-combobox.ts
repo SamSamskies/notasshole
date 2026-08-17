@@ -179,6 +179,18 @@ export function attachIdentityCombobox(input: HTMLInputElement): () => void {
 
   function scheduleSearch() {
     window.clearTimeout(debounceTimer)
+    searchAbort?.abort()
+    searchAbort = undefined
+    searchGeneration++
+    suggestions = []
+    clearActiveOption()
+    listbox.replaceChildren()
+    setExpanded(false)
+
+    if (!shouldSuggestProfiles(input.value)) {
+      return
+    }
+
     debounceTimer = window.setTimeout(() => {
       void runSearch(input.value)
     }, SEARCH_DEBOUNCE_MS)
