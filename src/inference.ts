@@ -1,4 +1,14 @@
-import { complete, isInferenceAvailable } from 'ipa-tools'
+import {
+  createInference,
+  isInferenceAvailable,
+  isInferenceError,
+  type InferenceClient,
+} from 'ipa-tools'
+import {
+  createVercelGeminiBackend,
+  GEMINI_BACKEND_ID,
+  hasGeminiConsent,
+} from './gemini-backend'
 
 export type Verdict = {
   verdict: 'ASSHOLE' | 'NOT ASSHOLE'
@@ -68,12 +78,64 @@ export function hasInference(): boolean {
   return isInferenceAvailable() && isSupportedContext()
 }
 
+const geminiBackend = createVercelGeminiBackend()
+const inferenceClient: InferenceClient = createInference({
+  fallbacks: [geminiBackend],
+})
+
+export async function probeInference(): Promise<{
+  ipa: boolean
+  hostedGemini: boolean
+}> {
+  if (!isSupportedContext()) {
+    return { ipa: false, hostedGemini: false }
+  }
+  const status = await inferenceClient.probe()
+  const hosted = status[GEMINI_BACKEND_ID]
+  return {
+    ipa: status.ipa === 'available',
+    hostedGemini: hosted === 'available',
+  }
+}
+
+/** True when IPA or the hosted Gemini fallback can serve a verdict. */
+export async function canRequestVerdict(): Promise<boolean> {
+  if (hasInference()) return true
+  const { hostedGemini } = await probeInference()
+  return hostedGemini
+}
+
 export class InferenceUnavailableError extends Error {
   constructor(
     message = 'INFERENCE PROVIDER API NOT DETECTED',
   ) {
     super(message)
     this.name = 'InferenceUnavailableError'
+  }
+}
+
+export class QuotaExhaustedError extends Error {
+  constructor(
+    message = 'No more free asshole detections for today.',
+  ) {
+    super(message)
+    this.name = 'QuotaExhaustedError'
+  }
+}
+
+export class ClientLimitError extends Error {
+  constructor(
+    message = "You have used up this browser's free Google judgments for today.",
+  ) {
+    super(message)
+    this.name = 'ClientLimitError'
+  }
+}
+
+export class GeminiConsentRequiredError extends Error {
+  constructor(message = 'Hosted Gemini consent required') {
+    super(message)
+    this.name = 'GeminiConsentRequiredError'
   }
 }
 
@@ -195,16 +257,42 @@ function coerceConfidence(value: unknown): number | null {
   return null
 }
 
+export type RequestVerdictOptions = {
+  signal?: AbortSignal
+  /**
+   * Called when IPA is missing and hosted Gemini is available but the user
+   * has not consented yet. Must return true only after explicit agreement.
+   */
+  ensureGeminiConsent?: () => Promise<boolean>
+}
+
 export async function requestVerdict(
   notesText: string,
-  signal?: AbortSignal,
+  options: RequestVerdictOptions = {},
 ): Promise<Verdict> {
-  if (!hasInference()) {
+  const { signal, ensureGeminiConsent } = options
+
+  if (!isSupportedContext()) {
     throw new InferenceUnavailableError(
-      isInferenceAvailable()
-        ? 'Unsupported context — open over https or localhost.'
-        : 'INFERENCE PROVIDER API NOT DETECTED',
+      'Unsupported context — open over https or localhost.',
     )
+  }
+
+  const status = await inferenceClient.probe()
+  const ipaOk = status.ipa === 'available'
+  const hostedOk = status[GEMINI_BACKEND_ID] === 'available'
+
+  if (!ipaOk && !hostedOk) {
+    throw new InferenceUnavailableError('INFERENCE PROVIDER API NOT DETECTED')
+  }
+
+  if (!ipaOk && hostedOk) {
+    if (!hasGeminiConsent()) {
+      const ok = ensureGeminiConsent ? await ensureGeminiConsent() : false
+      if (!ok) {
+        throw new GeminiConsentRequiredError()
+      }
+    }
   }
 
   const userContent = `Recent Nostr posts:\n\n${notesText}`
@@ -212,15 +300,17 @@ export async function requestVerdict(
   let model = ''
 
   try {
-    const done = await complete({
-      method: 'chat',
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userContent },
-      ],
-      options: { reasoningEffort: 'none' },
-      signal,
-    })
+    const done = await inferenceClient.complete(
+      {
+        method: 'chat',
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: userContent },
+        ],
+        options: { reasoningEffort: 'none' },
+        signal,
+      },
+    )
     content =
       typeof done.message.content === 'string' ? done.message.content : ''
     model = done.model?.trim() ?? ''
@@ -234,9 +324,34 @@ export async function requestVerdict(
         cause: error.causeDetail,
         raw: error.raw || content,
       })
-    } else {
-      console.warn('[AssholeNet] unexpected inference error', error)
+      throw error
     }
+
+    if (isInferenceError(error)) {
+      if (
+        error.code === 'unavailable' &&
+        /client_limit/i.test(error.message)
+      ) {
+        throw new ClientLimitError()
+      }
+      if (
+        error.code === 'unavailable' &&
+        /quota_exhausted/i.test(error.message)
+      ) {
+        throw new QuotaExhaustedError()
+      }
+      if (error.code === 'unavailable' && !isInferenceAvailable()) {
+        throw new InferenceUnavailableError(error.message)
+      }
+      if (error.code === 'permission_denied') {
+        throw new GeminiConsentRequiredError(error.message)
+      }
+      if (error.code === 'aborted') {
+        throw error
+      }
+    }
+
+    console.warn('[AssholeNet] unexpected inference error', error)
     throw error
   }
 }

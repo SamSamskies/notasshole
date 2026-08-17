@@ -142,50 +142,6 @@ body::before {
   }
 }
 
-.ipa-banner {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem 1rem;
-  padding: 0.8rem 1rem;
-  border: 1px solid #e4cfa0;
-  border-radius: 10px;
-  background: var(--warn-soft);
-  color: var(--warn);
-  font-size: 0.92rem;
-  line-height: 1.35;
-}
-
-.ipa-banner[hidden] {
-  display: none;
-}
-
-.ipa-banner p {
-  margin: 0;
-  flex: 1 1 14rem;
-}
-
-.ipa-banner a {
-  color: var(--ink);
-  font-weight: 700;
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
-  letter-spacing: 0.02em;
-  text-decoration: underline;
-  text-underline-offset: 0.15em;
-  white-space: nowrap;
-}
-
-.ipa-banner a:hover {
-  color: var(--mustard-deep);
-}
-
-.ipa-banner a:focus-visible {
-  outline: 2px solid var(--mustard-deep);
-  outline-offset: 2px;
-}
-
 .hero {
   text-align: center;
   padding: 1.5rem 0 0.25rem;
@@ -328,8 +284,35 @@ body::before {
   }
 }
 
-.error-panel {
+.error-panel,
+.consent-panel {
   text-align: center;
+}
+
+a.consent-bridge,
+a.primary.consent-bridge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
+a.consent-alt {
+  display: inline-block;
+  margin: 0.9rem auto 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  text-underline-offset: 0.18em;
+}
+
+a.consent-alt:hover {
+  color: var(--ink);
+}
+
+a.consent-alt:focus-visible {
+  outline: 2px solid var(--mustard-deep);
+  outline-offset: 2px;
 }
 
 .error-title {
@@ -487,6 +470,10 @@ body::before {
   margin-top: 1.25rem;
 }
 
+.shell > .actions {
+  margin-top: 0;
+}
+
 .notes {
   margin: 1.25rem 0 0;
   padding: 0;
@@ -534,6 +521,12 @@ body::before {
   color: var(--muted);
   font-size: 0.82rem;
   line-height: 1.4;
+}
+
+.result-panel .disclaimer {
+  margin-top: 1.15rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line);
 }
 
 .site-footer {
@@ -616,6 +609,10 @@ body::before {
 @media (max-width: 480px) {
   .actions {
     flex-direction: column;
+  }
+
+  .shell > .actions {
+    flex-direction: column-reverse;
   }
 
   .actions .primary,
