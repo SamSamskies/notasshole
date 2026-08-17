@@ -494,7 +494,7 @@ async function judge(raw: string) {
         view: 'error',
         title: 'NO JUDGE AVAILABLE',
         detail:
-          'No inference extension and no free Google fallback right now. Install Inference Bridge to keep judging with your own provider.',
+          'Gemini is cooked. Install Inference Bridge to keep judging with your own provider and model.',
         retryable: true,
         bridgeCta: true,
       })
@@ -633,7 +633,7 @@ async function judge(raw: string) {
         view: 'error',
         title: 'NO JUDGE AVAILABLE',
         detail:
-          'No inference extension and no free Google fallback right now. Install Inference Bridge to keep judging with your own provider.',
+          'Gemini is cooked. Install Inference Bridge to keep judging with your own provider and model.',
         retryable: true,
         bridgeCta: true,
       })
