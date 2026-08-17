@@ -42,7 +42,7 @@ npx vercel dev
 
 `vercel dev` loads `.env.local`, serves `/api/judge`, and proxies the Vite app. No production deploy is required to try the fallback.
 
-Optional env (see `.env.example`): `GEMINI_MODEL`, `GEMINI_FALLBACK_ENABLED`, `ALLOWED_ORIGINS`, generous daily caps.
+Optional env (see `.env.example`): `GEMINI_MODEL`, `GEMINI_FALLBACK_ENABLED`, generous daily caps.
 
 ## Build
 
@@ -51,7 +51,7 @@ npm ci
 npm run build
 ```
 
-Static output lands in `dist/`. For Vercel: build command `npm run build`, output directory `dist`. Set `GEMINI_API_KEY` (and optionally `ALLOWED_ORIGINS` to your production origin) in the Vercel project env.
+Static output lands in `dist/`. For Vercel: build command `npm run build`, output directory `dist`. Set `GEMINI_API_KEY` in the Vercel project env.
 
 ## Hosted Gemini notes
 

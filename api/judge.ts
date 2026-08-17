@@ -54,7 +54,7 @@ function loadLocalEnvFallback(): void {
         const eq = trimmed.indexOf('=')
         if (eq <= 0) continue
         const key = trimmed.slice(0, eq).trim()
-        if (!key.startsWith('GEMINI_') && key !== 'ALLOWED_ORIGINS') continue
+        if (!key.startsWith('GEMINI_')) continue
         if (process.env[key]?.trim()) continue
         let value = trimmed.slice(eq + 1).trim()
         if (
@@ -103,15 +103,6 @@ function originFromHost(host: string | undefined): string | null {
 }
 
 function allowedOrigins(): Set<string> {
-  const raw = process.env.ALLOWED_ORIGINS?.trim()
-  if (raw) {
-    return new Set(
-      raw
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
-    )
-  }
   const origins = new Set([
     'http://localhost:3000',
     'http://localhost:5173',
