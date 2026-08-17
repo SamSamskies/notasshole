@@ -15,8 +15,16 @@ type JudgeMessage = {
   content: string | null
 }
 
+type ReasoningEffort = 'auto' | 'none' | 'low' | 'medium' | 'high'
+
+type JudgeOptions = {
+  reasoningEffort?: ReasoningEffort
+  temperature?: number
+}
+
 type JudgeBody = {
   messages?: JudgeMessage[]
+  options?: unknown
 }
 
 type DayBucket = { day: string; count: number }
@@ -252,6 +260,12 @@ export default async function handler(
     return
   }
 
+  const options = parseJudgeOptions(body.options)
+  if (options === null) {
+    res.status(400).json({ error: 'invalid_request' })
+    return
+  }
+
   const clientHeader = req.headers['x-assholenet-client']
   const clientId =
     typeof clientHeader === 'string' ? clientHeader.trim() : ''
@@ -270,6 +284,15 @@ export default async function handler(
   const model = modelId()
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`
 
+  const generationConfig: Record<string, unknown> = {
+    responseMimeType: 'application/json',
+  }
+  const thinkingConfig = thinkingConfigForEffort(model, options.reasoningEffort)
+  if (thinkingConfig) generationConfig.thinkingConfig = thinkingConfig
+  if (options.temperature !== undefined) {
+    generationConfig.temperature = options.temperature
+  }
+
   const geminiBody: Record<string, unknown> = {
     contents: [
       {
@@ -277,10 +300,7 @@ export default async function handler(
         parts: [{ text: prompt.user }],
       },
     ],
-    generationConfig: {
-      temperature: 0.9,
-      responseMimeType: 'application/json',
-    },
+    generationConfig,
   }
   if (prompt.system) {
     geminiBody.systemInstruction = {
@@ -345,6 +365,62 @@ export default async function handler(
   }
 
   res.status(200).json({ content: text, model })
+}
+
+const REASONING_EFFORTS = new Set<ReasoningEffort>([
+  'auto',
+  'none',
+  'low',
+  'medium',
+  'high',
+])
+
+/** IPA `options` from complete(); unknown keys ignored. */
+function parseJudgeOptions(raw: unknown): JudgeOptions | null {
+  if (raw == null) return {}
+  if (typeof raw !== 'object' || Array.isArray(raw)) return null
+  const record = raw as Record<string, unknown>
+  const options: JudgeOptions = {}
+
+  if ('reasoningEffort' in record && record.reasoningEffort !== undefined) {
+    if (
+      typeof record.reasoningEffort !== 'string' ||
+      !REASONING_EFFORTS.has(record.reasoningEffort as ReasoningEffort)
+    ) {
+      return null
+    }
+    options.reasoningEffort = record.reasoningEffort as ReasoningEffort
+  }
+
+  if ('temperature' in record && record.temperature !== undefined) {
+    if (
+      typeof record.temperature !== 'number' ||
+      !Number.isFinite(record.temperature) ||
+      record.temperature < 0 ||
+      record.temperature > 2
+    ) {
+      return null
+    }
+    options.temperature = record.temperature
+  }
+
+  return options
+}
+
+/** Map IPA `reasoningEffort` onto Gemini thinking knobs. Omit for auto/absent. */
+function thinkingConfigForEffort(
+  model: string,
+  effort: ReasoningEffort | undefined,
+): Record<string, unknown> | undefined {
+  if (effort == null || effort === 'auto') return undefined
+  // 2.5 Flash uses token budgets; 3.x rejects thinkingBudget and has no off.
+  if (/\b2\.5\b/.test(model)) {
+    if (effort === 'none') return { thinkingBudget: 0 }
+    if (effort === 'low') return { thinkingBudget: 1024 }
+    if (effort === 'medium') return { thinkingBudget: 8192 }
+    return { thinkingBudget: -1 }
+  }
+  return { thinkingLevel: effort === 'none' ? 'minimal' : effort }
 }
 
 function extractGeminiText(data: unknown): string | null {

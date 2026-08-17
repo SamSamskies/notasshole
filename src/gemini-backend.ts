@@ -71,11 +71,16 @@ function bumpSoftClientCount(): void {
   }
 }
 
+const GEMINI_FEATURES = {
+  toolCalling: false,
+  options: { reasoningEffort: true, temperature: true },
+} as const
+
 export function createVercelGeminiBackend(): InferenceBackend {
   return {
     id: GEMINI_BACKEND_ID,
     getFeatures() {
-      return { toolCalling: false }
+      return GEMINI_FEATURES
     },
     async probe() {
       try {
@@ -89,7 +94,7 @@ export function createVercelGeminiBackend(): InferenceBackend {
     async create() {
       return {
         getFeatures() {
-          return { toolCalling: false }
+          return GEMINI_FEATURES
         },
         async *request(req: InferenceRequest) {
           if (!hasGeminiConsent()) {
@@ -113,6 +118,7 @@ export function createVercelGeminiBackend(): InferenceBackend {
                 role: m.role,
                 content: 'content' in m ? m.content : null,
               })),
+              ...(req.options ? { options: req.options } : {}),
             }),
             signal: req.signal,
           })
