@@ -140,6 +140,9 @@ export function createVercelGeminiBackend(): InferenceBackend {
           if (errorCode === 'client_limit') {
             throw makeInferenceError('unavailable', 'client_limit')
           }
+          if (errorCode === 'rate_limited') {
+            throw makeInferenceError('unavailable', 'rate_limited')
+          }
           if (res.status === 429 || errorCode === 'quota_exhausted') {
             throw makeInferenceError('unavailable', 'quota_exhausted')
           }

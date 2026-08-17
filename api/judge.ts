@@ -3,12 +3,18 @@
  * Key stays server-side. Local: `npx vercel dev` (loads `.env.local`).
  *
  * Shared Google free-tier quota is enforced by Gemini 429s.
+ * 429s are classified as per-minute (retryable) vs per-day (done until reset).
  * We only soft-cap per browser client token to blunt casual spam.
  */
 
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { VercelRequest, VercelResponse } from '@vercel/node'
+import {
+  classifyGemini429,
+  collectQuotaIds,
+  type GeminiQuotaKind,
+} from '../src/gemini-quota'
 
 type JudgeMessage = {
   role: string
@@ -339,7 +345,21 @@ export default async function handler(
 
   if (geminiRes.status === 429) {
     releaseClient(clientId)
-    res.status(429).json({ error: 'quota_exhausted' })
+    let quota: GeminiQuotaKind = 'rate'
+    try {
+      const errJson = (await geminiRes.json()) as unknown
+      quota = classifyGemini429(errJson)
+      console.warn('[api/judge] Gemini 429', {
+        kind: quota,
+        quotaIds: collectQuotaIds(errJson),
+        message: geminiErrorMessage(errJson)?.slice(0, 200),
+      })
+    } catch {
+      console.warn('[api/judge] Gemini 429', { kind: quota, unreadable: true })
+    }
+    res.status(429).json({
+      error: quota === 'daily' ? 'quota_exhausted' : 'rate_limited',
+    })
     return
   }
 
@@ -442,6 +462,14 @@ function thinkingConfigForEffort(
     return { thinkingBudget: -1 }
   }
   return { thinkingLevel: effort === 'none' ? 'minimal' : effort }
+}
+
+function geminiErrorMessage(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const error = (value as { error?: unknown }).error
+  if (!error || typeof error !== 'object') return undefined
+  const message = (error as { message?: unknown }).message
+  return typeof message === 'string' ? message : undefined
 }
 
 function extractGeminiText(data: unknown): string | null {

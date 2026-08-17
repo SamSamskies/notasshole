@@ -123,6 +123,15 @@ export class QuotaExhaustedError extends Error {
   }
 }
 
+export class RateLimitedError extends Error {
+  constructor(
+    message = 'Too many judgments at once. Try again in a little while.',
+  ) {
+    super(message)
+    this.name = 'RateLimitedError'
+  }
+}
+
 export class ClientLimitError extends Error {
   constructor(
     message = "You have used up this browser's free Google judgments for today.",
@@ -333,6 +342,12 @@ export async function requestVerdict(
         /client_limit/i.test(error.message)
       ) {
         throw new ClientLimitError()
+      }
+      if (
+        error.code === 'unavailable' &&
+        /rate_limited/i.test(error.message)
+      ) {
+        throw new RateLimitedError()
       }
       if (
         error.code === 'unavailable' &&
