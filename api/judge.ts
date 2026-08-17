@@ -134,21 +134,23 @@ function applyCors(res: VercelResponse, origin: string | null): void {
   }
 }
 
-function clientUnderLimit(key: string, limit: number): boolean {
-  const day = todayUtc()
-  const cur = clientBuckets.get(key)
-  if (!cur || cur.day !== day) return true
-  return cur.count < limit
-}
-
-function bumpClient(key: string): void {
+function tryConsumeClient(key: string, limit: number): boolean {
   const day = todayUtc()
   const cur = clientBuckets.get(key)
   if (!cur || cur.day !== day) {
     clientBuckets.set(key, { day, count: 1 })
-    return
+    return true
   }
+  if (cur.count >= limit) return false
   cur.count += 1
+  return true
+}
+
+function releaseClient(key: string): void {
+  const day = todayUtc()
+  const cur = clientBuckets.get(key)
+  if (!cur || cur.day !== day || cur.count <= 0) return
+  cur.count -= 1
 }
 
 function requestOrigin(req: VercelRequest): string | null {
@@ -289,7 +291,7 @@ export default async function handler(
   }
 
   const clientLimit = envInt('GEMINI_CLIENT_DAILY_LIMIT', DEFAULT_CLIENT_DAILY)
-  if (!clientUnderLimit(clientId, clientLimit)) {
+  if (!tryConsumeClient(clientId, clientLimit)) {
     res.status(429).json({ error: 'client_limit' })
     return
   }
@@ -330,16 +332,19 @@ export default async function handler(
       body: JSON.stringify(geminiBody),
     })
   } catch {
+    releaseClient(clientId)
     res.status(502).json({ error: 'provider_error' })
     return
   }
 
   if (geminiRes.status === 429) {
+    releaseClient(clientId)
     res.status(429).json({ error: 'quota_exhausted' })
     return
   }
 
   if (!geminiRes.ok) {
+    releaseClient(clientId)
     // Surface status only (no prompt / key material).
     let geminiCode: string | undefined
     try {
@@ -368,17 +373,18 @@ export default async function handler(
   try {
     geminiJson = await geminiRes.json()
   } catch {
+    releaseClient(clientId)
     res.status(502).json({ error: 'provider_error' })
     return
   }
 
   const text = extractGeminiText(geminiJson)
   if (!text) {
+    releaseClient(clientId)
     res.status(502).json({ error: 'provider_error' })
     return
   }
 
-  bumpClient(clientId)
   res.status(200).json({ content: text, model })
 }
 
