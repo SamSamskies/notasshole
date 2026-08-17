@@ -7,6 +7,7 @@ import {
   searchProfiles,
   shouldSuggestProfiles,
   storeProfileSearchCacheForTest,
+  suggestionValue,
 } from './profile-search'
 
 const querySync = vi.fn()
@@ -131,5 +132,36 @@ describe('searchProfiles cache', () => {
 
     await searchProfiles('jack')
     expect(querySync).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the newest kind 0 profile per pubkey', async () => {
+    querySync.mockResolvedValue([
+      sampleEvent,
+      {
+        ...sampleEvent,
+        id: 'def',
+        created_at: 2,
+        content: JSON.stringify({
+          name: 'jack',
+          display_name: 'Jack (new)',
+          nip05: 'jack@jack.com',
+        }),
+      },
+    ])
+
+    const results = await searchProfiles('jack')
+    expect(results).toHaveLength(1)
+    expect(results[0]?.displayName).toBe('Jack (new)')
+  })
+})
+
+describe('suggestionValue', () => {
+  it('returns npub so selection resolves to the shown pubkey', () => {
+    const suggestion = {
+      pubkey: sampleEvent.pubkey,
+      npub: 'npub1example',
+      nip05: 'jack@jack.com',
+    }
+    expect(suggestionValue(suggestion)).toBe('npub1example')
   })
 })

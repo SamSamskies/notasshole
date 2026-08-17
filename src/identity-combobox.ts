@@ -48,6 +48,11 @@ export function attachIdentityCombobox(input: HTMLInputElement): () => void {
   }
 
   function closeSuggestions() {
+    window.clearTimeout(debounceTimer)
+    debounceTimer = undefined
+    searchAbort?.abort()
+    searchAbort = undefined
+    searchGeneration++
     suggestions = []
     clearActiveOption()
     listbox.replaceChildren()

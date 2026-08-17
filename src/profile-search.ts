@@ -1,4 +1,4 @@
-import { nip19, SimplePool } from 'nostr-tools'
+import { nip19, SimplePool, type Event } from 'nostr-tools'
 import { isNip05 } from 'nostr-tools/nip05'
 import {
   looksLikePrivateKey,
@@ -88,18 +88,22 @@ async function fetchProfilesFromRelay(
       { maxWait: SEARCH_MAX_WAIT_MS },
     )
 
-    const byPubkey = new Map<string, ProfileSuggestion>()
+    const byPubkey = new Map<string, Event>()
     for (const event of events) {
-      if (byPubkey.has(event.pubkey)) continue
+      const prev = byPubkey.get(event.pubkey)
+      if (!prev || event.created_at > prev.created_at) {
+        byPubkey.set(event.pubkey, event)
+      }
+    }
+
+    return [...byPubkey.values()].map((event) => {
       const profile = parseKind0Profile(event)
-      byPubkey.set(event.pubkey, {
+      return {
         pubkey: event.pubkey,
         npub: nip19.npubEncode(event.pubkey),
         ...profile,
-      })
-    }
-
-    return [...byPubkey.values()]
+      }
+    })
   } catch {
     return []
   } finally {
@@ -143,7 +147,7 @@ export async function searchProfiles(
 }
 
 export function suggestionValue(suggestion: ProfileSuggestion): string {
-  return suggestion.nip05 ?? suggestion.npub
+  return suggestion.npub
 }
 
 /** @internal Test helper for cache expiry behavior. */
