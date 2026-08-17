@@ -134,7 +134,7 @@ export class RateLimitedError extends Error {
 
 export class ClientLimitError extends Error {
   constructor(
-    message = "You have used up this browser's free Google judgments for today.",
+    message = "You have used up this browser's free judgments for today.",
   ) {
     super(message)
     this.name = 'ClientLimitError'

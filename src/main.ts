@@ -216,7 +216,7 @@ function renderConsent(resolve: (ok: boolean) => void) {
   const body = document.createElement('p')
   body.className = 'error-detail'
   body.textContent =
-    'Inference Bridge is not here. We can still judge, but only if you are cool sending this asshole request to Google. Gemini may use prompts to improve Google products. Inference Bridge keeps notes with your own provider instead.'
+    'Inference Bridge is not here. We can still judge, but only if you are cool sending this asshole request to Google. Google may use prompts to improve their products. Inference Bridge keeps notes with your own provider instead.'
 
   const actions = document.createElement('div')
   actions.className = 'actions'
@@ -597,7 +597,7 @@ async function judge(raw: string) {
         view: 'error',
         title: 'EASY, JUDGE',
         detail:
-          'This browser has used up its free Google judgments for today. Install Inference Bridge to keep judging with your own provider and model.',
+          'This browser has used up its free judgments for today. Install Inference Bridge to keep judging with your own provider and model.',
         retryable: false,
         bridgeCta: true,
       })
@@ -609,7 +609,7 @@ async function judge(raw: string) {
         view: 'error',
         title: 'TOO MANY JUDGMENTS AT ONCE',
         detail:
-          'Gemini needs a minute. Try again in a little while, or install Inference Bridge to keep judging with your own provider and model.',
+          'Our asshole judge needs a minute. Try again in a little while, or install Inference Bridge to keep judging with your own provider and model.',
         retryable: true,
         bridgeCta: true,
       })
@@ -621,7 +621,7 @@ async function judge(raw: string) {
         view: 'error',
         title: 'NO MORE FREE ASSHOLE DETECTIONS FOR TODAY',
         detail:
-          'Gemini is cooked. Install Inference Bridge to keep judging with your own provider and model.',
+          'Our asshole judge is cooked. Install Inference Bridge to keep judging with your own provider and model.',
         retryable: false,
         bridgeCta: true,
       })
