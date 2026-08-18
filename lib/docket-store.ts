@@ -57,7 +57,11 @@ export async function tryConsumeDocketWrite(
   if (count === 1) {
     await redis.expire(key, 60 * 60 * 36)
   }
-  return count <= limit
+  if (count > limit) {
+    await redis.decr(key)
+    return false
+  }
+  return true
 }
 
 /** Refund a slot after `tryConsumeDocketWrite` succeeded but the write failed. */
