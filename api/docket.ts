@@ -9,6 +9,7 @@ import {
   appendDocketCase,
   isDocketPubkeyExcluded,
   listDocketCards,
+  releaseDocketWrite,
   tryConsumeDocketWrite,
 } from '../lib/docket-store'
 import { applyCors, originAllowed, requestOrigin } from '../lib/http'
@@ -110,15 +111,24 @@ export default async function handler(
     return
   }
 
+  let consumed = false
   try {
     if (!(await tryConsumeDocketWrite(redis, token))) {
       res.status(429).json({ error: 'client_limit' })
       return
     }
+    consumed = true
 
     const { snapshot, replaced } = await appendDocketCase(redis, parsed.value)
     res.status(200).json({ case: toCardSummary(snapshot), replaced })
   } catch (error) {
+    if (consumed) {
+      try {
+        await releaseDocketWrite(redis, token)
+      } catch (releaseError) {
+        console.warn('[api/docket] release write failed', releaseError)
+      }
+    }
     console.warn('[api/docket] write failed', error)
     res.status(503).json({ error: 'unavailable' })
   }

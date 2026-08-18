@@ -60,6 +60,18 @@ export async function tryConsumeDocketWrite(
   return count <= limit
 }
 
+/** Refund a slot after `tryConsumeDocketWrite` succeeded but the write failed. */
+export async function releaseDocketWrite(
+  redis: Redis,
+  clientId: string,
+): Promise<void> {
+  const key = writesKey(clientId, todayUtc())
+  const count = await redis.decr(key)
+  if (typeof count === 'number' && count < 0) {
+    await redis.del(key)
+  }
+}
+
 export async function appendDocketCase(
   redis: Redis,
   input: DocketCaseInput,
