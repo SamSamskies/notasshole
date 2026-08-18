@@ -17,7 +17,29 @@ export type Verdict = {
   model: string
 }
 
-export const SYSTEM_PROMPT = `You are AssholeNet, an intentionally ridiculous fictional classifier.
+const MAX_PROMPT_NAME_LENGTH = 80
+
+/** Collapse a Nostr display name so it can sit in the system prompt. */
+export function promptSafeName(name: string): string | undefined {
+  const cleaned = name
+    // C0 controls, DEL, NEL, and Unicode line/paragraph separators.
+    .replace(/[\u0000-\u001f\u007f\u0085\u2028\u2029]+/g, ' ')
+    .replace(/["\\]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!cleaned) return undefined
+  return cleaned.length > MAX_PROMPT_NAME_LENGTH
+    ? cleaned.slice(0, MAX_PROMPT_NAME_LENGTH).trimEnd()
+    : cleaned
+}
+
+export function createSystemPrompt(name?: string): string {
+  const safeName = name ? promptSafeName(name) : undefined
+  const refer = safeName
+    ? `Refer to ${safeName} in third person only (never first or second person). Use that name. Do not call them "this subject" or "this user".`
+    : `Refer to the person in third person only (never first or second person). Do not call them "this subject" or "this user". If the verdict is ASSHOLE, "this asshole" is a fine way to refer to them.`
+
+  return `You are AssholeNet, an intentionally ridiculous fictional classifier.
 
 Your job is to read a person's recent public Nostr posts and produce a humorous verdict:
 
@@ -59,6 +81,8 @@ Do not automatically choose NOT ASSHOLE just to be polite.
 
 Keep the explanation funny but grounded in the supplied posts.
 
+${refer}
+
 Return only JSON:
 
 {
@@ -66,6 +90,7 @@ Return only JSON:
   "confidence": integer from 50 to 99,
   "reason": "one concise humorous explanation"
 }`
+}
 
 export const INFERENCE_BRIDGE_URL =
   'https://chromewebstore.google.com/detail/ekjldffogogadhfhgkibgkfdhhikfamd'
@@ -268,6 +293,8 @@ function coerceConfidence(value: unknown): number | null {
 
 export type RequestVerdictOptions = {
   signal?: AbortSignal
+  /** Profile display name used in the system prompt, if any. */
+  name?: string
   /**
    * Called when IPA is missing and hosted Gemini is available but the user
    * has not consented yet. Must return true only after explicit agreement.
@@ -279,7 +306,7 @@ export async function requestVerdict(
   notesText: string,
   options: RequestVerdictOptions = {},
 ): Promise<Verdict> {
-  const { signal, ensureGeminiConsent } = options
+  const { signal, ensureGeminiConsent, name } = options
 
   if (!isSupportedContext()) {
     throw new InferenceUnavailableError(
@@ -313,7 +340,7 @@ export async function requestVerdict(
       {
         method: 'chat',
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'system', content: createSystemPrompt(name) },
           { role: 'user', content: userContent },
         ],
         options: { reasoningEffort: 'none' },
