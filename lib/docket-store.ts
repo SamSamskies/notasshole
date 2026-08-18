@@ -80,10 +80,20 @@ export async function appendDocketCase(
   redis: Redis,
   input: DocketCaseInput,
 ): Promise<{ snapshot: DocketCase; replaced: boolean }> {
-  const existing = await redis.get<string>(pubkeyKey(input.pubkey))
-  const replaced =
-    typeof existing === 'string' && CASE_ID_RE.test(existing)
-  const id = replaced ? existing : crypto.randomUUID()
+  const pointerKey = pubkeyKey(input.pubkey)
+  const candidateId = crypto.randomUUID()
+  const created = await redis.setnx(pointerKey, candidateId)
+  let id = candidateId
+  let replaced = false
+  if (created !== 1) {
+    const existing = await redis.get<string>(pointerKey)
+    if (typeof existing === 'string' && CASE_ID_RE.test(existing)) {
+      id = existing
+      replaced = true
+    } else {
+      await redis.set(pointerKey, candidateId)
+    }
+  }
   const snapshot: DocketCase = {
     ...input,
     id,
@@ -96,7 +106,7 @@ export async function appendDocketCase(
     .lpush(IDS_KEY, id)
     .lrange(IDS_KEY, DOCKET_STORE_LIMIT, -1)
     .ltrim(IDS_KEY, 0, DOCKET_STORE_LIMIT - 1)
-    .set(pubkeyKey(input.pubkey), id)
+    .set(pointerKey, id)
     .exec()
 
   const overflow = dropped[3]
