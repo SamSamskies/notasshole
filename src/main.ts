@@ -678,6 +678,7 @@ async function judge(raw: string) {
 
     const verdict = await requestVerdict(formatNotesForPrompt(notes), {
       signal,
+      name: profile.displayName,
       ensureGeminiConsent: askGeminiConsent,
     })
     if (!isActiveJudge(signal)) return
