@@ -38,6 +38,7 @@ import {
   type ProfileInfo,
 } from './nostr'
 import {
+  cachedDocketCase,
   docketIdFromSearch,
   docketSubjectName,
   fetchDocketCase,
@@ -47,6 +48,7 @@ import {
   publishDocketCase,
   reasonSnippet,
   type DocketCard,
+  type DocketCase,
 } from './docket'
 
 const FETCH_LOADING_MESSAGES = [
@@ -93,14 +95,14 @@ let loadingTimer: number | undefined
 let abortController: AbortController | undefined
 let comboboxCleanup: (() => void) | undefined
 let lastInput = ''
-let docketList: DocketCard[] | undefined
+let docketList: DocketCase[] | undefined
 let docketRefresh: Promise<void> | undefined
 
-function rememberDocketCard(card: DocketCard) {
+function rememberDocketCase(snapshot: DocketCase) {
   const rest = (docketList ?? []).filter(
-    (item) => item.id !== card.id && item.pubkey !== card.pubkey,
+    (item) => item.id !== snapshot.id && item.pubkey !== snapshot.pubkey,
   )
-  docketList = [card, ...rest]
+  docketList = [snapshot, ...rest]
 }
 
 function renderDocket(cards: DocketCard[] | undefined): HTMLElement | undefined {
@@ -214,8 +216,8 @@ function mountDocket(cards: DocketCard[] | undefined) {
 function refreshDocket() {
   if (docketRefresh) return docketRefresh
   docketRefresh = fetchDocketList()
-    .then((cards) => {
-      if (cards) docketList = cards
+    .then((cases) => {
+      if (cases) docketList = cases
       mountDocket(docketList)
     })
     .finally(() => {
@@ -241,34 +243,8 @@ function goIdle() {
   setState({ view: 'idle' })
 }
 
-async function openSnapshot(
-  id: string,
-  options?: { pushUrl?: boolean },
-) {
-  if (options?.pushUrl) {
-    history.pushState({ view: 'snapshot', id }, '', docketPath(id))
-  }
-
-  abortController?.abort()
-  abortController = new AbortController()
-  const signal = abortController.signal
-  startLoadingCycle(['PULLING THE FILE...', 'OPENING THE DOCKET...'])
-
-  const snapshot = await fetchDocketCase(id)
-  if (!isActiveJudge(signal)) return
+function applySnapshot(snapshot: DocketCase) {
   stopLoadingCycle()
-
-  if (!snapshot) {
-    setState({
-      view: 'error',
-      title: 'FILE NOT FOUND',
-      detail:
-        'That docket entry is gone. Judgements fall off this public list after a while.',
-      retryable: false,
-    })
-    return
-  }
-
   setState({
     view: 'result',
     verdict: {
@@ -289,6 +265,44 @@ async function openSnapshot(
       pubkey: snapshot.pubkey,
     },
   })
+}
+
+async function openSnapshot(
+  id: string,
+  options?: { pushUrl?: boolean },
+) {
+  if (options?.pushUrl) {
+    history.pushState({ view: 'snapshot', id }, '', docketPath(id))
+  }
+
+  abortController?.abort()
+  abortController = new AbortController()
+  const signal = abortController.signal
+
+  const cached = cachedDocketCase(docketList, id)
+  if (cached) {
+    applySnapshot(cached)
+    return
+  }
+
+  startLoadingCycle(['PULLING THE FILE...', 'OPENING THE DOCKET...'])
+
+  const snapshot = await fetchDocketCase(id)
+  if (!isActiveJudge(signal)) return
+  stopLoadingCycle()
+
+  if (!snapshot) {
+    setState({
+      view: 'error',
+      title: 'FILE NOT FOUND',
+      detail:
+        'That docket entry is gone. Judgements fall off this public list after a while.',
+      retryable: false,
+    })
+    return
+  }
+
+  applySnapshot(snapshot)
 }
 
 function shuffleMessages(messages: string[]): string[] {
@@ -938,8 +952,8 @@ async function judge(raw: string) {
       profile,
       verdict,
       notes,
-    }).then((card) => {
-      if (card) rememberDocketCard(card)
+    }).then((snapshot) => {
+      if (snapshot) rememberDocketCase(snapshot)
     })
   } catch (error) {
     if (!isActiveJudge(signal)) return

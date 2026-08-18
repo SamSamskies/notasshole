@@ -5,10 +5,8 @@ import {
   DOCKET_LIST_LIMIT,
   DOCKET_STORE_LIMIT,
   HEX_64,
-  type DocketCard,
   type DocketCase,
   type DocketCaseInput,
-  toCardSummary,
 } from '../src/docket-payload.js'
 import { envInt, todayUtc } from './env.js'
 
@@ -139,7 +137,7 @@ async function deleteDroppedCases(
   await redis.del(...keys)
 }
 
-export async function listDocketCards(redis: Redis): Promise<DocketCard[]> {
+export async function listDocketCases(redis: Redis): Promise<DocketCase[]> {
   const ids = await redis.lrange<string>(IDS_KEY, 0, DOCKET_LIST_LIMIT - 1)
   if (!ids.length) return []
 
@@ -148,20 +146,21 @@ export async function listDocketCards(redis: Redis): Promise<DocketCard[]> {
     redis.smembers(EXCLUDED_KEY),
   ])
   const excluded = asMemberSet(excludedMembers)
-  const cards: DocketCard[] = []
+  const cases: DocketCase[] = []
   const seen = new Set<string>()
   for (const blob of blobs) {
     if (!blob || typeof blob !== 'object' || typeof blob.id !== 'string') {
       continue
     }
+    if (!Array.isArray(blob.notes) || blob.notes.length === 0) continue
     if (typeof blob.pubkey === 'string') {
       if (seen.has(blob.pubkey)) continue
       if (excluded.has(blob.pubkey.toLowerCase())) continue
       seen.add(blob.pubkey)
     }
-    cards.push(toCardSummary(blob))
+    cases.push(blob)
   }
-  return cards
+  return cases
 }
 
 export async function getDocketCase(

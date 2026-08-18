@@ -156,18 +156,28 @@ function readSnapshot(raw: unknown): DocketCase | undefined {
   return { ...card, notes }
 }
 
-export async function fetchDocketList(): Promise<DocketCard[] | undefined> {
+export function readDocketCases(raw: unknown): DocketCase[] | undefined {
+  if (!isRecord(raw) || !Array.isArray(raw.cases)) return undefined
+  const cases: DocketCase[] = []
+  for (const item of raw.cases) {
+    const snapshot = readSnapshot(item)
+    if (snapshot) cases.push(snapshot)
+  }
+  return cases
+}
+
+export function cachedDocketCase(
+  list: DocketCase[] | undefined,
+  id: string,
+): DocketCase | undefined {
+  return list?.find((item) => item.id === id && item.notes.length > 0)
+}
+
+export async function fetchDocketList(): Promise<DocketCase[] | undefined> {
   try {
     const res = await fetch('/api/docket')
     if (!res.ok) return undefined
-    const data = await readJson(res)
-    if (!isRecord(data) || !Array.isArray(data.cases)) return undefined
-    const cards: DocketCard[] = []
-    for (const item of data.cases) {
-      const card = readCard(item)
-      if (card) cards.push(card)
-    }
-    return cards
+    return readDocketCases(await readJson(res))
   } catch {
     return undefined
   }
@@ -191,7 +201,7 @@ export async function publishDocketCase(input: {
   profile: ProfileInfo
   verdict: Verdict
   notes: LocatedEvent[]
-}): Promise<DocketCard | undefined> {
+}): Promise<DocketCase | undefined> {
   try {
     const res = await fetch('/api/docket', {
       method: 'POST',
@@ -220,7 +230,10 @@ export async function publishDocketCase(input: {
     if (!res.ok) return undefined
     const data = await readJson(res)
     if (!isRecord(data)) return undefined
-    return readCard(data.case)
+    const snapshot = readSnapshot(data.case)
+    if (snapshot) return snapshot
+    const card = readCard(data.case)
+    return card ? { ...card, notes: [] } : undefined
   } catch {
     return undefined
   }

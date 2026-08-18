@@ -3,12 +3,11 @@ import {
   CLIENT_TOKEN_RE,
   MAX_DOCKET_BODY_BYTES,
   parseDocketPost,
-  toCardSummary,
 } from '../src/docket-payload.js'
 import {
   appendDocketCase,
   isDocketPubkeyExcluded,
-  listDocketCards,
+  listDocketCases,
   releaseDocketWrite,
   tryConsumeDocketWrite,
 } from '../lib/docket-store.js'
@@ -51,7 +50,7 @@ export default async function handler(
 
   if (req.method === 'GET') {
     try {
-      const cases = await listDocketCards(redis)
+      const cases = await listDocketCases(redis)
       res.status(200).json({ cases })
     } catch (error) {
       console.warn('[api/docket] list failed', error)
@@ -120,7 +119,7 @@ export default async function handler(
     consumed = true
 
     const { snapshot, replaced } = await appendDocketCase(redis, parsed.value)
-    res.status(200).json({ case: toCardSummary(snapshot), replaced })
+    res.status(200).json({ case: snapshot, replaced })
   } catch (error) {
     if (consumed) {
       try {

@@ -1,6 +1,6 @@
 ---
 name: docket
-description: List, delete, and ban AssholeNet public docket cases. Use when the user asks to delete a docket entry, clear the recent docket, list docket ids, ban/exclude/block a spammer npub from the feed, unban, or manage stored judgements.
+description: List, delete, and ban AssholeNet public docket cases. Measure homepage docket list payload size. Use when the user asks to delete a docket entry, clear the recent docket, list docket ids, ban/exclude/block a spammer npub from the feed, unban, manage stored judgements, or check how big the docket list/payload is.
 ---
 
 # Docket admin
@@ -9,6 +9,7 @@ Manage the rolling public docket in Redis. Bans live in the `docket:excluded` se
 
 ```bash
 node .cursor/skills/docket/scripts/docket.mjs list [--json]
+node .cursor/skills/docket/scripts/docket.mjs size [--json]
 node .cursor/skills/docket/scripts/docket.mjs get <id> [--json]
 node .cursor/skills/docket/scripts/docket.mjs delete <id> [id...]
 node .cursor/skills/docket/scripts/docket.mjs clear --yes
@@ -44,6 +45,16 @@ Do not put bans in `DOCKET_EXCLUDE_NPUBS`, `.env.local`, or Vercel env.
 
 Do not delete `docket:writes:*` (daily write caps) or `docket:excluded` (bans). Do not add a public delete endpoint.
 
+## Payload size
+
+`GET /api/docket` returns full snapshots (notes included) so opening a card does not need a second fetch. Check that body with `size` — do not stringify the list in the API just to log bytes.
+
+1. Run `size` from the repo root (optional `--json`).
+2. Report case count, total JSON bytes for `{ cases }`, how many bytes notes add, and the largest case (name, bytes, note count). Do not dump note bodies.
+3. A line about 150 KB is a soft flag only. Do not change the list API unless the user asks.
+
+`size` uses the same 24-card feed, pubkey dedupe, and ban filter as the homepage. `list` still shows every stored id.
+
 ## Redis keys
 
 - `docket:ids` — newest-first list of case ids
@@ -61,3 +72,5 @@ The CLI already `LREM`s the id, deletes the snapshot, and drops the pubkey point
 - “Unban npub1…” → `unban npub1…`
 - “Delete the NotBiebs docket” → `list --json`, match display name, `delete <id>`
 - “Clear the docket” → `clear --yes`
+- “How big is the docket list?” → `size`
+- “Check docket payload size” → `size --json`
