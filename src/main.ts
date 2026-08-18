@@ -37,6 +37,17 @@ import {
   type NostrIdentity,
   type ProfileInfo,
 } from './nostr'
+import {
+  docketIdFromSearch,
+  docketSubjectName,
+  fetchDocketCase,
+  fetchDocketList,
+  formatRelativeTime,
+  notesFromSnapshot,
+  publishDocketCase,
+  reasonSnippet,
+  type DocketCard,
+} from './docket'
 
 const FETCH_LOADING_MESSAGES = [
   'SEARCHING THE RELAYS...',
@@ -66,6 +77,11 @@ type AppState =
       notes: LocatedEvent[]
       profile: ProfileInfo
       showNotes: boolean
+      snapshot?: {
+        id: string
+        judgedAt: string
+        pubkey: string
+      }
     }
 
 const appEl = document.querySelector<HTMLDivElement>('#app')
@@ -77,6 +93,203 @@ let loadingTimer: number | undefined
 let abortController: AbortController | undefined
 let comboboxCleanup: (() => void) | undefined
 let lastInput = ''
+let docketList: DocketCard[] | undefined
+let docketRefresh: Promise<void> | undefined
+
+function rememberDocketCard(card: DocketCard) {
+  const rest = (docketList ?? []).filter(
+    (item) => item.id !== card.id && item.pubkey !== card.pubkey,
+  )
+  docketList = [card, ...rest]
+}
+
+function renderDocket(cards: DocketCard[] | undefined): HTMLElement | undefined {
+  if (!cards || cards.length === 0) return undefined
+
+  const section = document.createElement('section')
+  section.className = 'docket'
+  section.setAttribute('aria-label', 'Recent docket')
+
+  const heading = document.createElement('div')
+  heading.className = 'docket-heading'
+
+  const kicker = document.createElement('p')
+  kicker.className = 'docket-kicker'
+  kicker.textContent = 'Public record'
+
+  const title = document.createElement('h2')
+  title.className = 'docket-title'
+  title.textContent = 'Recent docket'
+
+  const blurb = document.createElement('p')
+  blurb.className = 'docket-blurb'
+  blurb.textContent =
+    'Snapshots of public notes at judgement time. Entertainment only — not a live re-run.'
+
+  heading.append(kicker, title, blurb)
+
+  const grid = document.createElement('div')
+  grid.className = 'docket-grid'
+
+  for (const card of cards) {
+    grid.append(renderDocketCard(card))
+  }
+
+  section.append(heading, grid)
+  return section
+}
+
+function renderDocketCard(card: DocketCard): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'docket-card'
+  const name = docketSubjectName(card)
+  const when = formatRelativeTime(card.judgedAt)
+  button.setAttribute(
+    'aria-label',
+    `${name}, ${card.verdict}${when ? `, filed ${when}` : ''}`,
+  )
+  button.addEventListener('click', () => {
+    void openSnapshot(card.id, { pushUrl: true })
+  })
+
+  const mugshot = document.createElement('div')
+  mugshot.className = 'mugshot'
+  mugshot.append(createAnonAvatar())
+  if (card.picture) {
+    const img = document.createElement('img')
+    img.className = 'avatar'
+    img.src = card.picture
+    img.alt = ''
+    img.referrerPolicy = 'no-referrer'
+    img.decoding = 'async'
+    img.addEventListener('error', () => {
+      img.remove()
+    })
+    mugshot.append(img)
+  }
+
+  const body = document.createElement('div')
+  body.className = 'docket-card-copy'
+
+  const subject = document.createElement('p')
+  subject.className = 'docket-card-name'
+  subject.textContent = name
+
+  const stamp = document.createElement('p')
+  stamp.className = `docket-card-stamp ${card.verdict === 'ASSHOLE' ? 'bad' : 'good'}`
+  stamp.textContent = card.verdict
+
+  const snippet = document.createElement('p')
+  snippet.className = 'docket-card-reason'
+  snippet.textContent = reasonSnippet(card.reason)
+
+  const time = document.createElement('p')
+  time.className = 'docket-card-time'
+  time.textContent = when ? `Filed ${when}` : 'Filed recently'
+
+  body.append(subject, stamp, snippet, time)
+  button.append(mugshot, body)
+  return button
+}
+
+function mountDocket(cards: DocketCard[] | undefined) {
+  if (state.view !== 'idle') return
+  const next = renderDocket(cards)
+  const existing = document.querySelector('.docket')
+  if (!next) {
+    existing?.remove()
+    return
+  }
+  if (existing) {
+    existing.replaceWith(next)
+    return
+  }
+  const shell = document.querySelector('.shell')
+  const disclaimer = shell?.querySelector(':scope > .disclaimer')
+  if (disclaimer) disclaimer.before(next)
+  else shell?.append(next)
+}
+
+function refreshDocket() {
+  if (docketRefresh) return docketRefresh
+  docketRefresh = fetchDocketList()
+    .then((cards) => {
+      if (cards) docketList = cards
+      mountDocket(docketList)
+    })
+    .finally(() => {
+      docketRefresh = undefined
+    })
+  return docketRefresh
+}
+
+function docketPath(id?: string): string {
+  const url = new URL(location.href)
+  if (id) url.searchParams.set('docket', id)
+  else url.searchParams.delete('docket')
+  const query = url.searchParams.toString()
+  return query ? `${url.pathname}?${query}` : url.pathname
+}
+
+function goIdle() {
+  abortController?.abort()
+  stopLoadingCycle()
+  if (docketIdFromSearch()) {
+    history.pushState({ view: 'idle' }, '', docketPath())
+  }
+  setState({ view: 'idle' })
+}
+
+async function openSnapshot(
+  id: string,
+  options?: { pushUrl?: boolean },
+) {
+  if (options?.pushUrl) {
+    history.pushState({ view: 'snapshot', id }, '', docketPath(id))
+  }
+
+  abortController?.abort()
+  abortController = new AbortController()
+  const signal = abortController.signal
+  startLoadingCycle(['PULLING THE FILE...', 'OPENING THE DOCKET...'])
+
+  const snapshot = await fetchDocketCase(id)
+  if (!isActiveJudge(signal)) return
+  stopLoadingCycle()
+
+  if (!snapshot) {
+    setState({
+      view: 'error',
+      title: 'FILE NOT FOUND',
+      detail:
+        'That docket entry is gone. Judgements fall off this public list after a while.',
+      retryable: false,
+    })
+    return
+  }
+
+  setState({
+    view: 'result',
+    verdict: {
+      verdict: snapshot.verdict,
+      confidence: snapshot.confidence,
+      reason: snapshot.reason,
+      model: snapshot.model,
+    },
+    notes: notesFromSnapshot(snapshot.notes),
+    profile: {
+      displayName: snapshot.displayName,
+      picture: snapshot.picture,
+    },
+    showNotes: false,
+    snapshot: {
+      id: snapshot.id,
+      judgedAt: snapshot.judgedAt,
+      pubkey: snapshot.pubkey,
+    },
+  })
+}
 
 function shuffleMessages(messages: string[]): string[] {
   const copy = [...messages]
@@ -148,10 +361,13 @@ function askGeminiConsent(): Promise<boolean> {
 const DISCLAIMER_TEXT =
   'For entertainment only. Results are AI-generated jokes based on public Nostr posts. Powered by highly questionable science.'
 
-function createDisclaimer(): HTMLParagraphElement {
+const SNAPSHOT_DISCLAIMER_TEXT =
+  'Entertainment only. This is a snapshot of public notes at judgement time, not a live re-run.'
+
+function createDisclaimer(snapshot = false): HTMLParagraphElement {
   const disclaimer = document.createElement('p')
   disclaimer.className = 'disclaimer'
-  disclaimer.textContent = DISCLAIMER_TEXT
+  disclaimer.textContent = snapshot ? SNAPSHOT_DISCLAIMER_TEXT : DISCLAIMER_TEXT
   return disclaimer
 }
 
@@ -329,7 +545,7 @@ function renderError(
   again.addEventListener('click', () => {
     abortController?.abort()
     stopLoadingCycle()
-    setState({ view: 'idle' })
+    goIdle()
   })
   actions.append(again)
 
@@ -442,9 +658,24 @@ function renderResult(
   notes: LocatedEvent[],
   profile: ProfileInfo,
   showNotes: boolean,
+  snapshot?: {
+    id: string
+    judgedAt: string
+    pubkey: string
+  },
 ) {
   const panel = document.createElement('section')
   panel.className = 'panel result-panel'
+
+  if (snapshot) {
+    const banner = document.createElement('p')
+    banner.className = 'snapshot-banner'
+    const when = formatRelativeTime(snapshot.judgedAt)
+    banner.textContent = when
+      ? `Filed ${when} · snapshot, not a new ruling`
+      : 'Snapshot, not a new ruling'
+    panel.append(banner)
+  }
 
   const mugshot = document.createElement('div')
   mugshot.className = 'mugshot'
@@ -467,7 +698,12 @@ function renderResult(
 
   const subject = document.createElement('p')
   subject.className = 'subject-name'
-  subject.textContent = profile.displayName?.trim() || 'Unknown subject'
+  subject.textContent = snapshot
+    ? docketSubjectName({
+        displayName: profile.displayName,
+        pubkey: snapshot.pubkey,
+      })
+    : profile.displayName?.trim() || 'Unknown subject'
 
   const stamp = document.createElement('div')
   stamp.className = `stamp ${verdict.verdict === 'ASSHOLE' ? 'bad' : 'good'}`
@@ -512,9 +748,10 @@ function renderResult(
   again.type = 'button'
   again.className = 'primary'
   again.textContent = 'JUDGE ANOTHER'
-  again.addEventListener('click', () => setState({ view: 'idle' }))
+  again.addEventListener('click', () => goIdle())
 
   actions.append(toggle, again)
+
   panel.append(
     mugshot,
     subject,
@@ -523,7 +760,7 @@ function renderResult(
     reason,
     meta,
     judgedBy,
-    createDisclaimer(),
+    createDisclaimer(Boolean(snapshot)),
   )
 
   if (showNotes) {
@@ -564,8 +801,9 @@ function render() {
 
   switch (state.view) {
     case 'idle':
-      renderShell(renderForm())
+      renderShell(renderForm(), { after: renderDocket(docketList) })
       document.querySelector<HTMLInputElement>('#identity')?.focus()
+      void refreshDocket()
       break
     case 'loading':
       renderLoading(state.message)
@@ -587,6 +825,7 @@ function render() {
         state.notes,
         state.profile,
         state.showNotes,
+        state.snapshot,
       )
       break
   }
@@ -620,6 +859,9 @@ async function resolveSubmittedIdentity(
 
 async function judge(raw: string) {
   lastInput = raw.trim()
+  if (docketIdFromSearch()) {
+    history.replaceState({ view: 'judge' }, '', docketPath())
+  }
   abortController?.abort()
   abortController = new AbortController()
   const signal = abortController.signal
@@ -690,6 +932,14 @@ async function judge(raw: string) {
       notes,
       profile,
       showNotes: false,
+    })
+    void publishDocketCase({
+      pubkey: identity.pubkey,
+      profile,
+      verdict,
+      notes,
+    }).then((card) => {
+      if (card) rememberDocketCard(card)
     })
   } catch (error) {
     if (!isActiveJudge(signal)) return
@@ -821,4 +1071,22 @@ async function judge(raw: string) {
   }
 }
 
-render()
+window.addEventListener('popstate', () => {
+  const id = docketIdFromSearch()
+  if (id) {
+    void openSnapshot(id)
+    return
+  }
+  if (state.view !== 'idle') {
+    abortController?.abort()
+    stopLoadingCycle()
+    setState({ view: 'idle' })
+  }
+})
+
+const bootId = docketIdFromSearch()
+if (bootId) {
+  void openSnapshot(bootId)
+} else {
+  render()
+}

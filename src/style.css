@@ -182,6 +182,170 @@ body::before {
   min-width: 0;
 }
 
+.shell:has(.docket) {
+  width: min(44rem, 100%);
+}
+
+.docket {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  animation: rise 0.4s ease-out both;
+}
+
+.docket-heading {
+  text-align: center;
+}
+
+.docket-kicker {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mustard-deep);
+}
+
+.docket-title {
+  margin: 0.35rem 0 0;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.45rem;
+  letter-spacing: -0.03em;
+  text-transform: uppercase;
+}
+
+.docket-blurb {
+  margin: 0.45rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.docket-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+}
+
+.docket-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  margin: 0;
+  padding: 1rem 0.9rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  text-align: center;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.docket-card:hover {
+  border-color: var(--mustard-deep);
+}
+
+.docket-card:focus-visible {
+  outline: 2px solid var(--mustard-deep);
+  outline-offset: 2px;
+}
+
+.docket-card .mugshot {
+  width: 5.5rem;
+  height: 5.5rem;
+  margin: 0 0 0.35rem;
+}
+
+.docket-card-copy {
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.docket-card-name {
+  margin: 0;
+  max-width: 100%;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.docket-card-stamp {
+  display: inline-block;
+  margin: 0.1rem 0 0;
+  padding: 0.28rem 0.5rem;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.82rem;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  white-space: nowrap;
+  border: 2px solid currentColor;
+  border-radius: 4px;
+  transform: rotate(-2.5deg);
+}
+
+.docket-card-stamp.bad {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.docket-card-stamp.good {
+  color: var(--ok);
+  background: var(--ok-soft);
+  transform: rotate(2deg);
+}
+
+.docket-card-reason {
+  margin: 0.15rem 0 0;
+  max-width: 100%;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.docket-card-time {
+  margin: 0.1rem 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.snapshot-banner {
+  margin: 0 0 1rem;
+  padding: 0.5rem 0.7rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border: 1px solid rgba(138, 90, 0, 0.28);
+  border-radius: 8px;
+  line-height: 1.35;
+}
+
 .judge-form {
   display: flex;
   flex-direction: column;
@@ -837,6 +1001,12 @@ a.open-in-link:focus-visible {
   }
 }
 
+@media (min-width: 640px) {
+  .docket-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -847,7 +1017,10 @@ a.open-in-link:focus-visible {
 
   .stamp,
   .stamp.bad,
-  .stamp.good {
+  .stamp.good,
+  .docket-card-stamp,
+  .docket-card-stamp.bad,
+  .docket-card-stamp.good {
     transform: none;
   }
 }

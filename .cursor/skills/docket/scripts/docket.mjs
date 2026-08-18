@@ -1,0 +1,381 @@
+#!/usr/bin/env node
+/**
+ * Admin CLI for the public recent docket (Upstash Redis).
+ * Run from the repo root so .env.local and node_modules resolve.
+ *
+ *   node .cursor/skills/docket/scripts/docket.mjs list [--json]
+ *   node .cursor/skills/docket/scripts/docket.mjs get <id> [--json]
+ *   node .cursor/skills/docket/scripts/docket.mjs delete <id> [id...]
+ *   node .cursor/skills/docket/scripts/docket.mjs clear --yes
+ *   node .cursor/skills/docket/scripts/docket.mjs bans [--json]
+ *   node .cursor/skills/docket/scripts/docket.mjs ban <npub|hex> [npub...]
+ *   node .cursor/skills/docket/scripts/docket.mjs unban <npub|hex> [npub...]
+ */
+import { existsSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { Redis } from '@upstash/redis'
+import { nip19 } from 'nostr-tools'
+
+const IDS_KEY = 'docket:ids'
+const EXCLUDED_KEY = 'docket:excluded'
+const CASE_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const HEX_64 = /^[0-9a-f]{64}$/i
+
+function loadLocalEnv() {
+  for (const file of ['.env.local', '.env']) {
+    const path = resolve(process.cwd(), file)
+    if (!existsSync(path)) continue
+    for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith('#')) continue
+      const eq = trimmed.indexOf('=')
+      if (eq <= 0) continue
+      const key = trimmed.slice(0, eq).trim()
+      if (process.env[key]?.trim()) continue
+      let value = trimmed.slice(eq + 1).trim()
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1)
+      }
+      if (value) process.env[key] = value
+    }
+  }
+}
+
+function getRedis() {
+  loadLocalEnv()
+  const url = (
+    process.env.UPSTASH_REDIS_REST_URL ||
+    process.env.KV_REST_API_URL ||
+    ''
+  ).trim()
+  const token = (
+    process.env.UPSTASH_REDIS_REST_TOKEN ||
+    process.env.KV_REST_API_TOKEN ||
+    ''
+  ).trim()
+  if (!url || !token) {
+    fail(
+      'Missing Redis REST credentials. Need KV_REST_API_URL + KV_REST_API_TOKEN (or UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN) in .env.local.',
+    )
+  }
+  return new Redis({ url, token })
+}
+
+function caseKey(id) {
+  return `docket:case:${id}`
+}
+
+function pubkeyKey(hex) {
+  return `docket:pubkey:${hex}`
+}
+
+function fail(message) {
+  console.error(message)
+  process.exit(1)
+}
+
+function usage() {
+  console.log(`Usage:
+  node .cursor/skills/docket/scripts/docket.mjs list [--json]
+  node .cursor/skills/docket/scripts/docket.mjs get <id> [--json]
+  node .cursor/skills/docket/scripts/docket.mjs delete <id> [id...]
+  node .cursor/skills/docket/scripts/docket.mjs clear --yes
+  node .cursor/skills/docket/scripts/docket.mjs bans [--json]
+  node .cursor/skills/docket/scripts/docket.mjs ban <npub|hex> [npub...]
+  node .cursor/skills/docket/scripts/docket.mjs unban <npub|hex> [npub...]`)
+}
+
+function parseArgs(argv) {
+  const flags = new Set()
+  const positionals = []
+  for (const arg of argv) {
+    if (arg.startsWith('--')) flags.add(arg.slice(2))
+    else positionals.push(arg)
+  }
+  return { command: positionals[0], args: positionals.slice(1), flags }
+}
+
+function summary(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null
+  return {
+    id: snapshot.id,
+    judgedAt: snapshot.judgedAt,
+    pubkey: snapshot.pubkey,
+    displayName: snapshot.displayName ?? '',
+    verdict: snapshot.verdict,
+    reason: snapshot.reason,
+  }
+}
+
+function decodePubkeyToken(token) {
+  const t = token.trim()
+  if (!t) return undefined
+  if (HEX_64.test(t)) return t.toLowerCase()
+  let code = t
+  if (code.toLowerCase().startsWith('nostr:')) code = code.slice(6)
+  try {
+    const decoded = nip19.decode(code)
+    if (decoded.type === 'npub') return decoded.data
+    if (decoded.type === 'nprofile') return decoded.data.pubkey
+  } catch {
+    return undefined
+  }
+  return undefined
+}
+
+function toNpub(hex) {
+  return nip19.npubEncode(hex)
+}
+
+function resolveTokens(tokens) {
+  if (tokens.length === 0) fail('needs at least one npub, nprofile, or hex pubkey')
+  const resolved = []
+  for (const token of tokens) {
+    const hex = decodePubkeyToken(token)
+    if (!hex) fail(`Not a valid npub / nprofile / hex pubkey: ${token}`)
+    resolved.push({ hex, npub: toNpub(hex), input: token })
+  }
+  return resolved
+}
+
+async function loadBanList(redis) {
+  const members = await redis.smembers(EXCLUDED_KEY)
+  const rows = []
+  for (const member of Array.isArray(members) ? members : []) {
+    if (typeof member !== 'string' || !HEX_64.test(member)) continue
+    const hex = member.toLowerCase()
+    rows.push({ hex, npub: toNpub(hex) })
+  }
+  rows.sort((a, b) => a.npub.localeCompare(b.npub))
+  return rows
+}
+
+async function loadCases(redis, ids) {
+  if (ids.length === 0) return []
+  const blobs = await redis.mget(...ids.map(caseKey))
+  return ids.map((id, index) => {
+    const blob = blobs[index]
+    if (!blob || typeof blob !== 'object') return { id, snapshot: null }
+    return { id, snapshot: blob }
+  })
+}
+
+async function cmdList(redis, json) {
+  const ids = await redis.lrange(IDS_KEY, 0, -1)
+  const rows = (await loadCases(redis, ids))
+    .map(({ snapshot }) => summary(snapshot))
+    .filter(Boolean)
+  if (json) {
+    console.log(JSON.stringify(rows, null, 2))
+    return
+  }
+  if (rows.length === 0) {
+    console.log('Docket is empty.')
+    return
+  }
+  for (const row of rows) {
+    const name = row.displayName || row.pubkey.slice(0, 12)
+    console.log(
+      `${row.id}\t${row.verdict}\t${row.judgedAt}\t${name}\t${row.pubkey}`,
+    )
+  }
+  console.log(`${rows.length} case(s)`)
+}
+
+async function cmdGet(redis, id, json) {
+  if (!CASE_ID_RE.test(id)) fail(`Invalid case id: ${id}`)
+  const snapshot = await redis.get(caseKey(id))
+  if (!snapshot) fail(`Not found: ${id}`)
+  if (json) {
+    console.log(JSON.stringify(snapshot, null, 2))
+    return
+  }
+  const row = summary(snapshot)
+  console.log(
+    [
+      `id: ${row.id}`,
+      `judgedAt: ${row.judgedAt}`,
+      `verdict: ${row.verdict}`,
+      `name: ${row.displayName || '(none)'}`,
+      `pubkey: ${row.pubkey}`,
+      `reason: ${row.reason}`,
+      `notes: ${Array.isArray(snapshot.notes) ? snapshot.notes.length : 0}`,
+    ].join('\n'),
+  )
+}
+
+async function deleteOne(redis, id) {
+  if (!CASE_ID_RE.test(id)) fail(`Invalid case id: ${id}`)
+  const snapshot = await redis.get(caseKey(id))
+  await redis.lrem(IDS_KEY, 0, id)
+  const keys = [caseKey(id)]
+  if (snapshot && typeof snapshot === 'object' && snapshot.pubkey) {
+    const pointer = await redis.get(pubkeyKey(snapshot.pubkey))
+    if (pointer === id) keys.push(pubkeyKey(snapshot.pubkey))
+  }
+  await redis.del(...keys)
+  return Boolean(snapshot)
+}
+
+async function cmdDelete(redis, ids) {
+  if (ids.length === 0) fail('delete requires at least one case id')
+  const results = []
+  for (const id of ids) {
+    const existed = await deleteOne(redis, id)
+    results.push({ id, deleted: existed })
+  }
+  for (const row of results) {
+    console.log(`${row.deleted ? 'deleted' : 'missing'}\t${row.id}`)
+  }
+}
+
+async function scanKeys(redis, match) {
+  const found = []
+  let cursor = '0'
+  do {
+    const [next, keys] = await redis.scan(cursor, { match, count: 100 })
+    cursor = String(next)
+    found.push(...keys)
+  } while (cursor !== '0')
+  return found
+}
+
+async function cmdClear(redis, flags) {
+  if (!flags.has('yes')) {
+    fail('Refusing to clear the docket without --yes')
+  }
+  const ids = await redis.lrange(IDS_KEY, 0, -1)
+  const cases = await loadCases(redis, ids)
+  const keys = [IDS_KEY]
+  for (const { id, snapshot } of cases) {
+    keys.push(caseKey(id))
+    if (snapshot?.pubkey) keys.push(pubkeyKey(snapshot.pubkey))
+  }
+  const leftovers = [
+    ...(await scanKeys(redis, 'docket:case:*')),
+    ...(await scanKeys(redis, 'docket:pubkey:*')),
+  ]
+  const unique = [...new Set([...keys, ...leftovers])]
+  if (unique.length > 0) await redis.del(...unique)
+  console.log(`cleared ${ids.length} listed case(s), ${unique.length} key(s)`)
+}
+
+async function cmdBans(redis, json) {
+  const rows = await loadBanList(redis)
+  if (json) {
+    console.log(JSON.stringify(rows, null, 2))
+    return
+  }
+  if (rows.length === 0) {
+    console.log('No npubs excluded.')
+    return
+  }
+  for (const row of rows) {
+    console.log(`${row.npub}\t${row.hex}`)
+  }
+  console.log(`${rows.length} excluded`)
+}
+
+async function deleteCasesForPubkeys(redis, hexes) {
+  const ids = await redis.lrange(IDS_KEY, 0, -1)
+  const cases = await loadCases(redis, ids)
+  const want = new Set(hexes)
+  const removed = []
+  for (const { id, snapshot } of cases) {
+    const hex = snapshot?.pubkey
+    if (typeof hex === 'string' && want.has(hex.toLowerCase())) {
+      await deleteOne(redis, id)
+      removed.push({ id, hex, name: snapshot.displayName || '' })
+    }
+  }
+  return removed
+}
+
+async function cmdBan(redis, tokens) {
+  const resolved = resolveTokens(tokens)
+  const before = new Set((await loadBanList(redis)).map((row) => row.hex))
+  const added = resolved.filter((row) => !before.has(row.hex))
+  if (added.length > 0) {
+    await redis.sadd(EXCLUDED_KEY, ...added.map((row) => row.hex))
+  }
+  const removed = await deleteCasesForPubkeys(
+    redis,
+    resolved.map((row) => row.hex),
+  )
+  if (added.length === 0) {
+    console.log('already excluded:')
+    for (const row of resolved) console.log(`\t${row.npub}`)
+  } else {
+    console.log('banned:')
+    for (const row of added) console.log(`\t${row.npub}`)
+  }
+  if (removed.length > 0) {
+    console.log('removed from docket:')
+    for (const row of removed) {
+      console.log(`\t${row.id}\t${row.name || row.hex}`)
+    }
+  }
+  const count = await redis.scard(EXCLUDED_KEY)
+  console.log(`${count} excluded`)
+}
+
+async function cmdUnban(redis, tokens) {
+  const resolved = resolveTokens(tokens)
+  const before = new Set((await loadBanList(redis)).map((row) => row.hex))
+  const removed = resolved.filter((row) => before.has(row.hex))
+  const missing = resolved.filter((row) => !before.has(row.hex))
+  if (removed.length > 0) {
+    await redis.srem(EXCLUDED_KEY, ...removed.map((row) => row.hex))
+  }
+  if (removed.length > 0) {
+    console.log('unbanned:')
+    for (const row of removed) console.log(`\t${row.npub}`)
+  }
+  if (missing.length > 0) {
+    console.log('not on list:')
+    for (const row of missing) console.log(`\t${row.npub}`)
+  }
+  const count = await redis.scard(EXCLUDED_KEY)
+  console.log(`${count} excluded`)
+}
+
+const { command, args, flags } = parseArgs(process.argv.slice(2))
+if (!command || command === 'help' || flags.has('help')) {
+  usage()
+  process.exit(command ? 0 : 1)
+}
+
+const redis = getRedis()
+const json = flags.has('json')
+
+switch (command) {
+  case 'list':
+    await cmdList(redis, json)
+    break
+  case 'get':
+    if (!args[0]) fail('get requires a case id')
+    await cmdGet(redis, args[0], json)
+    break
+  case 'delete':
+    await cmdDelete(redis, args)
+    break
+  case 'clear':
+    await cmdClear(redis, flags)
+    break
+  case 'bans':
+    await cmdBans(redis, json)
+    break
+  case 'ban':
+    await cmdBan(redis, args)
+    break
+  case 'unban':
+    await cmdUnban(redis, args)
+    break
+  default:
+    usage()
+    fail(`Unknown command: ${command}`)
+}

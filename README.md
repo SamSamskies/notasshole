@@ -44,6 +44,18 @@ npx vercel dev
 
 Optional env (see `.env.example`): `GEMINI_MODEL` (default `gemma-4-31b-it`), `GEMINI_FALLBACK_ENABLED`, generous daily caps.
 
+## Public recent docket
+
+Successful judgements are posted (fire-and-forget) to a rolling public list stored in [Upstash Redis](https://upstash.com/). The idle homepage shows recent cases; opening a card shows the stored snapshot. Submitting an identity always re-judges.
+
+If the Redis env vars are missing, judging still works and the homepage hides the grid.
+
+Vercel marketplace (`vercel integration add upstash/upstash-kv`) injects `KV_REST_API_URL` and `KV_REST_API_TOKEN`. Pull them into `.env.local` with `npx vercel env pull`. Extra vars (`KV_REST_API_READ_ONLY_TOKEN`, `KV_URL`, `REDIS_URL`) can stay; the app ignores them.
+
+If you create the database in the Upstash console instead, `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` also work.
+
+To keep identities off the homepage feed, ban their `npub` with the docket admin CLI (stored in Redis, live immediately — no redeploy). Judging still runs; those cases are not stored or listed.
+
 ## Build
 
 ```bash
@@ -51,7 +63,7 @@ npm ci
 npm run build
 ```
 
-Static output lands in `dist/`. For Vercel: build command `npm run build`, output directory `dist`. Set `GEMINI_API_KEY` in the Vercel project env.
+Static output lands in `dist/`. For Vercel: build command `npm run build`, output directory `dist`. Set `GEMINI_API_KEY` and the Redis REST vars (`KV_REST_API_URL` / `KV_REST_API_TOKEN`) in the Vercel project env.
 
 ## Hosted Gemini notes
 
@@ -61,7 +73,8 @@ Static output lands in `dist/`. For Vercel: build command `npm run build`, outpu
 ## Stack
 
 - TypeScript + Vite
-- Vercel Edge Function (`api/judge.ts`) for optional Gemini fallback
+- Vercel Serverless Functions (`api/judge.ts`, `api/docket.ts`) for Gemini fallback and the public docket
+- [Upstash Redis](https://upstash.com/) (optional; rolling recent-docket store)
 - [`nostr-tools`](https://github.com/nbd-wtf/nostr-tools)
 - [`ipa-tools`](https://www.npmjs.com/package/ipa-tools) (Inference Provider API types + `createInference` fallbacks)
 
