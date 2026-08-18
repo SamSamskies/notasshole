@@ -4,6 +4,7 @@
  * Run from the repo root so .env.local and node_modules resolve.
  *
  *   node .cursor/skills/docket/scripts/docket.mjs list [--json]
+ *   node .cursor/skills/docket/scripts/docket.mjs size [--json]
  *   node .cursor/skills/docket/scripts/docket.mjs get <id> [--json]
  *   node .cursor/skills/docket/scripts/docket.mjs delete <id> [id...]
  *   node .cursor/skills/docket/scripts/docket.mjs clear --yes
@@ -21,6 +22,10 @@ const EXCLUDED_KEY = 'docket:excluded'
 const CASE_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const HEX_64 = /^[0-9a-f]{64}$/i
+/** Keep in sync with DOCKET_LIST_LIMIT in src/docket-payload.ts */
+const LIST_LIMIT = 24
+/** Soft flag for a fat homepage list. Not an error. */
+const LIST_BYTES_WARN = 150_000
 
 function loadLocalEnv() {
   for (const file of ['.env.local', '.env']) {
@@ -81,6 +86,7 @@ function fail(message) {
 function usage() {
   console.log(`Usage:
   node .cursor/skills/docket/scripts/docket.mjs list [--json]
+  node .cursor/skills/docket/scripts/docket.mjs size [--json]
   node .cursor/skills/docket/scripts/docket.mjs get <id> [--json]
   node .cursor/skills/docket/scripts/docket.mjs delete <id> [id...]
   node .cursor/skills/docket/scripts/docket.mjs clear --yes
@@ -184,6 +190,109 @@ async function cmdList(redis, json) {
     )
   }
   console.log(`${rows.length} case(s)`)
+}
+
+function withoutNotes(snapshot) {
+  const { notes: _notes, ...card } = snapshot
+  return card
+}
+
+function noteChars(snapshot) {
+  const notes = Array.isArray(snapshot.notes) ? snapshot.notes : []
+  let chars = 0
+  for (const note of notes) {
+    if (typeof note?.content === 'string') chars += note.content.length
+  }
+  return chars
+}
+
+function formatBytes(n) {
+  if (n < 1024) return `${n} bytes`
+  return `${n} bytes (${(n / 1024).toFixed(1)} KB)`
+}
+
+async function loadFeed(redis) {
+  const ids = await redis.lrange(IDS_KEY, 0, LIST_LIMIT - 1)
+  const [rows, excludedMembers] = await Promise.all([
+    loadCases(redis, ids),
+    redis.smembers(EXCLUDED_KEY),
+  ])
+  const excluded = new Set(
+    (Array.isArray(excludedMembers) ? excludedMembers : [])
+      .filter((value) => typeof value === 'string' && HEX_64.test(value))
+      .map((value) => value.toLowerCase()),
+  )
+  const cases = []
+  const seen = new Set()
+  for (const { snapshot } of rows) {
+    if (!snapshot || typeof snapshot !== 'object' || typeof snapshot.id !== 'string') {
+      continue
+    }
+    if (!Array.isArray(snapshot.notes) || snapshot.notes.length === 0) continue
+    const hex = snapshot.pubkey
+    if (typeof hex === 'string') {
+      if (seen.has(hex)) continue
+      if (excluded.has(hex.toLowerCase())) continue
+      seen.add(hex)
+    }
+    cases.push(snapshot)
+  }
+  return cases
+}
+
+async function cmdSize(redis, json) {
+  const cases = await loadFeed(redis)
+  const listJson = JSON.stringify({ cases })
+  const cardsJson = JSON.stringify({ cases: cases.map(withoutNotes) })
+  const perCase = cases.map((snapshot) => ({
+    id: snapshot.id,
+    displayName:
+      typeof snapshot.displayName === 'string' ? snapshot.displayName : '',
+    bytes: JSON.stringify(snapshot).length,
+    notes: snapshot.notes.length,
+    noteChars: noteChars(snapshot),
+  }))
+  const largest = perCase.reduce(
+    (best, row) => (!best || row.bytes > best.bytes ? row : best),
+    null,
+  )
+  const report = {
+    cases: cases.length,
+    listLimit: LIST_LIMIT,
+    bytes: listJson.length,
+    cardBytes: cardsJson.length,
+    noteBytes: listJson.length - cardsJson.length,
+    averageBytes: perCase.length
+      ? Math.round(perCase.reduce((sum, row) => sum + row.bytes, 0) / perCase.length)
+      : 0,
+    largest,
+    warnBytes: LIST_BYTES_WARN,
+    overWarn: listJson.length >= LIST_BYTES_WARN,
+  }
+
+  if (json) {
+    console.log(JSON.stringify({ ...report, perCase }, null, 2))
+    return
+  }
+  if (cases.length === 0) {
+    console.log('Docket feed is empty.')
+    return
+  }
+  console.log(
+    `GET /api/docket\t${cases.length} case(s)\t${formatBytes(report.bytes)}`,
+  )
+  console.log(`notes add\t${formatBytes(report.noteBytes)}`)
+  if (largest) {
+    const name = largest.displayName || largest.id
+    console.log(
+      `largest\t${formatBytes(largest.bytes)}\t${name}\t${largest.notes} notes\t${largest.noteChars} chars`,
+    )
+  }
+  if (report.overWarn) {
+    console.log(
+      `Feed is over ${formatBytes(LIST_BYTES_WARN)}. Homepage may feel slower; consider dropping notes from the list again.`,
+    )
+  }
 }
 
 async function cmdGet(redis, id, json) {
@@ -355,6 +464,9 @@ const json = flags.has('json')
 switch (command) {
   case 'list':
     await cmdList(redis, json)
+    break
+  case 'size':
+    await cmdSize(redis, json)
     break
   case 'get':
     if (!args[0]) fail('get requires a case id')

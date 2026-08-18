@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { nip19 } from 'nostr-tools'
 import {
+  cachedDocketCase,
   docketIdFromSearch,
   docketSubjectName,
   formatRelativeTime,
   notesFromSnapshot,
+  readDocketCases,
   reasonSnippet,
   shortNpub,
 } from './docket'
@@ -62,5 +64,55 @@ describe('docket display helpers', () => {
       content: 'hello',
       seenOn: ['wss://nos.lol'],
     })
+  })
+})
+
+const CASE_ID = '11111111-1111-4111-8111-111111111111'
+
+function listCase(overrides: Record<string, unknown> = {}) {
+  return {
+    id: CASE_ID,
+    judgedAt: '2026-08-18T19:00:00.000Z',
+    pubkey: PUBKEY,
+    displayName: 'Alice',
+    verdict: 'ASSHOLE',
+    confidence: 90,
+    reason: 'Relentless reply-guy energy.',
+    model: 'on-device',
+    notes: [
+      {
+        id: 'b'.repeat(64),
+        pubkey: PUBKEY,
+        created_at: 1_700_000_000,
+        content: 'hello',
+        seenOn: ['wss://nos.lol'],
+      },
+    ],
+    ...overrides,
+  }
+}
+
+describe('docket list cache', () => {
+  it('keeps note bodies from the list payload', () => {
+    const cases = readDocketCases({ cases: [listCase()] })
+    expect(cases).toHaveLength(1)
+    expect(cases?.[0]?.notes[0]?.content).toBe('hello')
+  })
+
+  it('skips cards that have no notes', () => {
+    const { notes: _notes, ...card } = listCase()
+    expect(readDocketCases({ cases: [card] })).toEqual([])
+  })
+
+  it('opens from cache only when notes are present', () => {
+    const cases = readDocketCases({ cases: [listCase()] })
+    expect(cachedDocketCase(cases, CASE_ID)?.id).toBe(CASE_ID)
+    expect(
+      cachedDocketCase(cases, '22222222-2222-4222-8222-222222222222'),
+    ).toBeUndefined()
+    const first = cases?.[0]
+    expect(first).toBeDefined()
+    if (!first) return
+    expect(cachedDocketCase([{ ...first, notes: [] }], CASE_ID)).toBeUndefined()
   })
 })
