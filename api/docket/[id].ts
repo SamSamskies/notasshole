@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { CASE_ID_RE } from '../../src/docket-payload'
-import { getDocketCase } from '../../lib/docket-store'
+import { getDocketCase, isDocketPubkeyExcluded } from '../../lib/docket-store'
 import { applyCors, originAllowed, requestOrigin } from '../../lib/http'
 import { getRedis } from '../../lib/redis'
 
@@ -40,7 +40,11 @@ export default async function handler(
 
   try {
     const snapshot = await getDocketCase(redis, id)
-    if (!snapshot) {
+    if (
+      !snapshot ||
+      (typeof snapshot.pubkey === 'string' &&
+        (await isDocketPubkeyExcluded(redis, snapshot.pubkey)))
+    ) {
       res.status(404).json({ error: 'not_found' })
       return
     }
