@@ -26,3 +26,7 @@ dist-ssr
 *.sln
 *.sw?
 .vercel
+
+# Third-party agent skills (`npx skills add`). Project skills live in .cursor/skills/.
+.agents/
+skills-lock.json
