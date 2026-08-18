@@ -124,7 +124,7 @@ function renderDocket(cards: DocketCard[] | undefined): HTMLElement | undefined 
   const blurb = document.createElement('p')
   blurb.className = 'docket-blurb'
   blurb.textContent =
-    'Snapshots of public notes at judgement time. Entertainment only — not a live re-run.'
+    'Snapshots of public notes at judgement time. Entertainment only.'
 
   heading.append(kicker, title, blurb)
 
@@ -362,7 +362,7 @@ const DISCLAIMER_TEXT =
   'For entertainment only. Results are AI-generated jokes based on public Nostr posts. Powered by highly questionable science.'
 
 const SNAPSHOT_DISCLAIMER_TEXT =
-  'Entertainment only. This is a snapshot of public notes at judgement time, not a live re-run.'
+  'Entertainment only. This is a snapshot of public notes at judgement time.'
 
 function createDisclaimer(snapshot = false): HTMLParagraphElement {
   const disclaimer = document.createElement('p')
