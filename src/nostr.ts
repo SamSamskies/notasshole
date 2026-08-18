@@ -6,6 +6,9 @@ export type NostrIdentity = {
   relayHints: string[]
 }
 
+/** A kind 1 note plus the relays it was actually returned from. */
+export type LocatedEvent = Event & { seenOn: string[] }
+
 export const DEFAULT_RELAYS = [
   'wss://nos.lol',
   'wss://relay.primal.net',
@@ -221,10 +224,21 @@ function isUsefulNote(event: Event): boolean {
   return true
 }
 
-export function selectNotes(events: Event[]): Event[] {
-  const byId = new Map<string, Event>()
+export function selectNotes(events: LocatedEvent[]): LocatedEvent[] {
+  const byId = new Map<string, LocatedEvent>()
   for (const event of events) {
-    if (!byId.has(event.id)) byId.set(event.id, event)
+    const existing = byId.get(event.id)
+    if (!existing) {
+      byId.set(event.id, {
+        ...event,
+        seenOn: dedupeRelays(event.seenOn ?? []),
+      })
+      continue
+    }
+    existing.seenOn = dedupeRelays([
+      ...existing.seenOn,
+      ...(event.seenOn ?? []),
+    ])
   }
 
   return [...byId.values()]
@@ -314,24 +328,30 @@ function isPrivateOrLocalHostname(hostname: string): boolean {
   return false
 }
 
-async function queryRelays(relays: string[], filter: Filter): Promise<Event[]> {
+async function queryRelaysLocated(
+  relays: string[],
+  filter: Filter,
+): Promise<LocatedEvent[]> {
   const pool = new SimplePool()
 
   try {
     // Query each relay independently so one dead endpoint cannot fail the rest.
     const settled = await Promise.allSettled(
-      relays.map((relay) =>
-        pool.querySync([relay], filter, { maxWait: RELAY_MAX_WAIT_MS }),
-      ),
+      relays.map(async (relay) => {
+        const events = await pool.querySync([relay], filter, {
+          maxWait: RELAY_MAX_WAIT_MS,
+        })
+        return events.map(
+          (event): LocatedEvent => ({ ...event, seenOn: [relay] }),
+        )
+      }),
     )
 
-    const events: Event[] = []
+    const located: LocatedEvent[] = []
     for (const result of settled) {
-      if (result.status === 'fulfilled') {
-        events.push(...result.value)
-      }
+      if (result.status === 'fulfilled') located.push(...result.value)
     }
-    return events
+    return located
   } catch {
     return []
   } finally {
@@ -339,9 +359,13 @@ async function queryRelays(relays: string[], filter: Filter): Promise<Event[]> {
   }
 }
 
+async function queryRelays(relays: string[], filter: Filter): Promise<Event[]> {
+  return queryRelaysLocated(relays, filter)
+}
+
 export async function fetchRecentNotes(
   identity: NostrIdentity,
-): Promise<Event[]> {
+): Promise<LocatedEvent[]> {
   const filter: Filter = {
     kinds: [1],
     authors: [identity.pubkey],
@@ -349,13 +373,13 @@ export async function fetchRecentNotes(
   }
 
   const tried = new Set<string>()
-  let events: Event[] = []
+  let events: LocatedEvent[] = []
 
   const queryUntried = async (relays: string[]) => {
     const fresh = relays.filter((url) => !tried.has(url))
     for (const url of fresh) tried.add(url)
     if (fresh.length === 0) return
-    const more = await queryRelays(fresh, filter)
+    const more = await queryRelaysLocated(fresh, filter)
     events = [...events, ...more]
   }
 

@@ -1,5 +1,11 @@
-import type { Event } from 'nostr-tools'
 import { setGeminiConsent } from './gemini-backend'
+import {
+  clientHref,
+  clientsForPlatform,
+  detectClientPlatform,
+  encodeNevent,
+  isWebClientHref,
+} from './nostr-clients'
 import {
   canRequestVerdict,
   ClientLimitError,
@@ -27,6 +33,7 @@ import {
   Nip05Error,
   PrivateKeyError,
   resolveIdentity,
+  type LocatedEvent,
   type NostrIdentity,
   type ProfileInfo,
 } from './nostr'
@@ -56,7 +63,7 @@ type AppState =
   | {
       view: 'result'
       verdict: Verdict
-      notes: Event[]
+      notes: LocatedEvent[]
       profile: ProfileInfo
       showNotes: boolean
     }
@@ -353,9 +360,86 @@ function createAnonAvatar(): SVGSVGElement {
   return svg
 }
 
+function createNoteMenuIcon(): SVGSVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('class', 'note-menu-icon')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('aria-hidden', 'true')
+
+  for (const cx of [6, 12, 18]) {
+    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+    dot.setAttribute('cx', String(cx))
+    dot.setAttribute('cy', '12')
+    dot.setAttribute('r', '1.65')
+    dot.setAttribute('fill', 'currentColor')
+    svg.append(dot)
+  }
+
+  return svg
+}
+
+function closeOpenInDialog() {
+  for (const el of document.querySelectorAll('dialog.open-in-dialog')) {
+    if (el instanceof HTMLDialogElement) el.close()
+  }
+}
+
+function openNoteInClient(note: LocatedEvent) {
+  closeOpenInDialog()
+
+  let nevent: string
+  try {
+    nevent = encodeNevent(note)
+  } catch {
+    return
+  }
+
+  const clients = clientsForPlatform(detectClientPlatform())
+  const dialog = document.createElement('dialog')
+  dialog.className = 'open-in-dialog'
+  dialog.setAttribute('aria-labelledby', 'open-in-title')
+
+  const title = document.createElement('h2')
+  title.id = 'open-in-title'
+  title.className = 'open-in-title'
+  title.textContent = 'Open in'
+
+  const list = document.createElement('div')
+  list.className = 'open-in-list'
+
+  for (const [index, client] of clients.entries()) {
+    const href = clientHref(client, nevent)
+    const link = document.createElement('a')
+    link.className =
+      index === 0 ? 'open-in-link primary' : 'open-in-link secondary'
+    link.href = href
+    link.textContent = client.name
+    if (isWebClientHref(href)) {
+      link.target = '_blank'
+      link.rel = 'noopener noreferrer'
+    }
+    list.append(link)
+  }
+
+  const cancel = document.createElement('button')
+  cancel.type = 'button'
+  cancel.className = 'open-in-cancel'
+  cancel.textContent = 'Cancel'
+  cancel.addEventListener('click', () => dialog.close())
+
+  dialog.append(title, list, cancel)
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close()
+  })
+  dialog.addEventListener('close', () => dialog.remove())
+
+  document.body.append(dialog)
+  dialog.showModal()
+}
+
 function renderResult(
   verdict: Verdict,
-  notes: Event[],
+  notes: LocatedEvent[],
   profile: ProfileInfo,
   showNotes: boolean,
 ) {
@@ -447,7 +531,21 @@ function renderResult(
     list.className = 'notes'
     for (const note of notes) {
       const item = document.createElement('li')
-      item.textContent = note.content
+
+      const body = document.createElement('p')
+      body.className = 'note-body'
+      body.textContent = note.content
+
+      const open = document.createElement('button')
+      open.type = 'button'
+      open.className = 'note-menu'
+      open.setAttribute('aria-haspopup', 'dialog')
+      open.setAttribute('aria-label', 'Open this note in…')
+      open.title = 'Open this note in…'
+      open.append(createNoteMenuIcon())
+      open.addEventListener('click', () => openNoteInClient(note))
+
+      item.append(body, open)
       list.append(item)
     }
     panel.append(list)
@@ -457,6 +555,8 @@ function renderResult(
 }
 
 function render() {
+  closeOpenInDialog()
+
   if (state.view !== 'idle') {
     comboboxCleanup?.()
     comboboxCleanup = undefined

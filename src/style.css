@@ -599,14 +599,13 @@ a.consent-alt:focus-visible {
 
 .notes li {
   position: relative;
-  padding: 0.75rem 0.85rem 0.75rem 2.4rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 0.75rem 2.5rem 0.75rem 2.4rem;
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 10px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 0.95rem;
-  line-height: 1.4;
   counter-increment: note;
 }
 
@@ -622,6 +621,114 @@ a.consent-alt:focus-visible {
   font-family: var(--font-mono);
   font-size: 0.75rem;
   color: var(--muted);
+}
+
+.note-body {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.note-menu {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.15rem;
+  height: 2.15rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.note-menu-icon {
+  display: block;
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.note-menu:hover {
+  color: var(--ink);
+  background: rgba(20, 24, 32, 0.06);
+}
+
+.note-menu:focus-visible {
+  outline: 2px solid var(--mustard-deep);
+  outline-offset: 1px;
+}
+
+.open-in-dialog {
+  width: min(22rem, calc(100vw - 2rem));
+  max-height: min(36rem, calc(100vh - 2rem));
+  overflow: auto;
+  margin: auto;
+  padding: 1.25rem 1.15rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+}
+
+.open-in-dialog::backdrop {
+  background: rgba(20, 24, 32, 0.48);
+}
+
+.open-in-title {
+  margin: 0 0 1rem;
+  text-align: center;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.45rem;
+  letter-spacing: -0.03em;
+  text-transform: uppercase;
+}
+
+.open-in-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+a.open-in-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
+.open-in-cancel {
+  display: block;
+  width: 100%;
+  margin: 0.85rem 0 0;
+  padding: 0.45rem;
+  border: none;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.open-in-cancel:hover {
+  color: var(--ink);
+}
+
+.open-in-cancel:focus-visible,
+a.open-in-link:focus-visible {
+  outline: 2px solid var(--mustard-deep);
+  outline-offset: 2px;
 }
 
 .disclaimer {
