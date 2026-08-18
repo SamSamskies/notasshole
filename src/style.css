@@ -129,13 +129,21 @@ body::before {
 }
 
 .shell {
-  width: min(34rem, 100%);
+  width: min(44rem, 100%);
   max-width: 100%;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
   animation: rise 0.45s ease-out both;
+}
+
+.hero,
+.panel,
+.disclaimer,
+.shell > .actions {
+  width: min(34rem, 100%);
+  align-self: center;
 }
 
 @keyframes rise {
@@ -180,10 +188,6 @@ body::before {
   box-shadow: var(--shadow);
   max-width: 100%;
   min-width: 0;
-}
-
-.shell:has(.docket) {
-  width: min(44rem, 100%);
 }
 
 .docket {
