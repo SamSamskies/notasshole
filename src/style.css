@@ -190,6 +190,7 @@ body::before {
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
+  margin-top: 2rem;
   animation: rise 0.4s ease-out both;
 }
 
