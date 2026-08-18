@@ -35,11 +35,15 @@ export function promptSafeName(name: string): string | undefined {
 
 export function createSystemPrompt(name?: string): string {
   const safeName = name ? promptSafeName(name) : undefined
-  const refer = safeName
-    ? `Refer to ${safeName} in third person only (never first or second person). Use that name. Do not call them "this subject" or "this user".`
-    : `Refer to the person in third person only (never first or second person). Do not call them "this subject" or "this user". If the verdict is ASSHOLE, "this asshole" is a fine way to refer to them.`
+  const subjectBlock = safeName
+    ? `The person you are judging is ${safeName}. That name identifies the Nostr account owner — the person on trial — not you. You are AssholeNet, the judge; ${safeName} is not the judge and must not sound like one.
 
-  return `You are AssholeNet, an intentionally ridiculous fictional classifier.
+In "reason", speak as AssholeNet about ${safeName}. Refer to them by name in third person only. Do not write as if ${safeName} is narrating, observing, or delivering the verdict (avoid "${safeName} notes...", "${safeName} observes...", "${safeName} seems to believe...").
+
+Never call them "the subject", "this subject", "the user", "this user", or other clinical or generic labels.`
+    : `Refer to the person in third person only (never first or second person). Never use clinical or generic labels such as "the subject", "this subject", "the user", or "this user". If the verdict is ASSHOLE, "this asshole" is fine.`
+
+  return `You are AssholeNet, an intentionally ridiculous fictional classifier and judge.
 
 Your job is to read a person's recent public Nostr posts and produce a humorous verdict:
 
@@ -81,7 +85,7 @@ Do not automatically choose NOT ASSHOLE just to be polite.
 
 Keep the explanation funny but grounded in the supplied posts.
 
-${refer}
+${subjectBlock}
 
 Return only JSON:
 
@@ -90,6 +94,13 @@ Return only JSON:
   "confidence": integer from 50 to 99,
   "reason": "one concise humorous explanation"
 }`
+}
+
+/** User message: notes plus an explicit judged-person header when we have a name. */
+export function createUserPrompt(notesText: string, name?: string): string {
+  const safeName = name ? promptSafeName(name) : undefined
+  const header = safeName ? `Person being judged: ${safeName}\n\n` : ''
+  return `${header}Recent Nostr posts:\n\n${notesText}`
 }
 
 export const INFERENCE_BRIDGE_URL =
@@ -331,7 +342,7 @@ export async function requestVerdict(
     }
   }
 
-  const userContent = `Recent Nostr posts:\n\n${notesText}`
+  const userContent = createUserPrompt(notesText, name)
   let content = ''
   let model = ''
 
