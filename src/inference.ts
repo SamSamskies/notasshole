@@ -22,7 +22,8 @@ const MAX_PROMPT_NAME_LENGTH = 80
 /** Collapse a Nostr display name so it can sit in the system prompt. */
 export function promptSafeName(name: string): string | undefined {
   const cleaned = name
-    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    // C0 controls, DEL, NEL, and Unicode line/paragraph separators.
+    .replace(/[\u0000-\u001f\u007f\u0085\u2028\u2029]+/g, ' ')
     .replace(/["\\]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
