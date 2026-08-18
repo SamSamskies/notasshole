@@ -1,0 +1,35 @@
+---
+description: Vercel Node functions are ESM. Relative imports in api/ and lib/ must use .js extensions or production 500s.
+globs: api/**/*.ts,lib/**/*.ts
+alwaysApply: true
+---
+
+# Vercel serverless ESM imports
+
+These are **Node.js serverless functions** (`api/*.ts`, `nodejs24.x`), not Edge. `package.json` has `"type": "module"`. Vercel compiles each handler and its local imports to `.js`, but it **does not rewrite specifiers**. Node ESM then fails with `ERR_MODULE_NOT_FOUND` / `FUNCTION_INVOCATION_FAILED`.
+
+This has already taken down `/api/judge` (gemini-quota) and `/api/docket` (`../src/docket-payload`, `../lib/http`).
+
+## Required
+
+Relative imports in `api/` and `lib/` (and any `src/` file those functions import) must include the `.js` extension:
+
+```ts
+// ✅ GOOD
+import { applyCors } from '../lib/http.js'
+import { parseDocketPost } from '../src/docket-payload.js'
+
+// ❌ BAD — works in `vercel dev`, 500s in production
+import { applyCors } from '../lib/http'
+import { parseDocketPost } from '../src/docket-payload'
+```
+
+Vite client code in `src/` can keep extensionless imports. Do not "fix" those to `.js` unless that file is also imported by an `api/` handler.
+
+## Do not
+
+- Extract helpers out of a self-contained `api/*.ts` file without adding `.js` specifiers on every new relative import.
+- Assume inlining is required; the files **are** shipped. The missing `.js` is what breaks production.
+- Use Edge (`runtime: 'edge'`) for these handlers.
+
+`src/serverless-imports.test.ts` enforces the `.js` suffix under `api/` and `lib/`.

@@ -15,7 +15,7 @@ import {
   applyCors,
   originAllowed,
   requestOrigin,
-} from '../lib/http'
+} from '../lib/http.js'
 
 type GeminiQuotaKind = 'daily' | 'rate'
 

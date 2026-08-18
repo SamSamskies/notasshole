@@ -9,8 +9,8 @@ import {
   type DocketCase,
   type DocketCaseInput,
   toCardSummary,
-} from '../src/docket-payload'
-import { envInt, todayUtc } from './env'
+} from '../src/docket-payload.js'
+import { envInt, todayUtc } from './env.js'
 
 const IDS_KEY = 'docket:ids'
 /** Hex pubkeys hidden from the public feed. Survives `clear`. */
