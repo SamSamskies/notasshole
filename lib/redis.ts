@@ -1,5 +1,5 @@
 import { Redis } from '@upstash/redis'
-import { loadLocalEnvFallback } from './env'
+import { loadLocalEnvFallback } from './env.js'
 
 loadLocalEnvFallback(['UPSTASH_', 'KV_', 'DOCKET_'])
 

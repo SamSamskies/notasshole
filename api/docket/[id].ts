@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { CASE_ID_RE } from '../../src/docket-payload'
-import { getDocketCase, isDocketPubkeyExcluded } from '../../lib/docket-store'
-import { applyCors, originAllowed, requestOrigin } from '../../lib/http'
-import { getRedis } from '../../lib/redis'
+import { CASE_ID_RE } from '../../src/docket-payload.js'
+import { getDocketCase, isDocketPubkeyExcluded } from '../../lib/docket-store.js'
+import { applyCors, originAllowed, requestOrigin } from '../../lib/http.js'
+import { getRedis } from '../../lib/redis.js'
 
 export default async function handler(
   req: VercelRequest,

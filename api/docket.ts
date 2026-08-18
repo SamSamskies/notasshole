@@ -4,16 +4,16 @@ import {
   MAX_DOCKET_BODY_BYTES,
   parseDocketPost,
   toCardSummary,
-} from '../src/docket-payload'
+} from '../src/docket-payload.js'
 import {
   appendDocketCase,
   isDocketPubkeyExcluded,
   listDocketCards,
   releaseDocketWrite,
   tryConsumeDocketWrite,
-} from '../lib/docket-store'
-import { applyCors, originAllowed, requestOrigin } from '../lib/http'
-import { getRedis } from '../lib/redis'
+} from '../lib/docket-store.js'
+import { applyCors, originAllowed, requestOrigin } from '../lib/http.js'
+import { getRedis } from '../lib/redis.js'
 
 function readBody(req: VercelRequest): string {
   if (typeof req.body === 'string') return req.body
