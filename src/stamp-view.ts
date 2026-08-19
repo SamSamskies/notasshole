@@ -748,8 +748,6 @@ async function downloadStamp() {
   try {
     await document.fonts.ready
     if (!session.image) return
-    applyFittedScales('current')
-    refreshStampDom()
     const canvas = exportStampedCanvas(session.image, session.placement)
     const blob = await canvasToBlob(canvas)
     saveBlob(blob, stampFilename(session.placement.verdict))
