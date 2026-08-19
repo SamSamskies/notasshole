@@ -23,6 +23,7 @@ import {
   SEARCH_RESULT_LIMIT,
   searchProfiles,
   shouldSuggestProfiles,
+  vertexHasKind0,
 } from './profile-search'
 import {
   fetchProfile,
@@ -959,6 +960,7 @@ async function judge(raw: string) {
     const identity = await resolveSubmittedIdentity(lastInput, signal)
     if (!isActiveJudge(signal)) return
 
+    const vertexListed = vertexHasKind0(identity.pubkey)
     const [notes, profile] = await Promise.all([
       fetchRecentNotes(identity),
       fetchProfile(identity),
@@ -1006,13 +1008,16 @@ async function judge(raw: string) {
       profile,
       showNotes: false,
     })
-    void publishDocketCase({
-      pubkey: identity.pubkey,
-      profile,
-      verdict,
-      notes,
-    }).then((snapshot) => {
-      if (snapshot) rememberDocketCase(snapshot)
+    void vertexListed.then((listed) => {
+      if (!listed) return
+      return publishDocketCase({
+        pubkey: identity.pubkey,
+        profile,
+        verdict,
+        notes,
+      }).then((snapshot) => {
+        if (snapshot) rememberDocketCase(snapshot)
+      })
     })
   } catch (error) {
     if (!isActiveJudge(signal)) return

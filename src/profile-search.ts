@@ -132,6 +132,32 @@ function loadProfiles(term: string, limit: number): Promise<ProfileSuggestion[]>
   return pending
 }
 
+/** True only if Vertex returned a kind 0 for this pubkey. Errors and misses are false. */
+export async function vertexHasKind0(pubkey: string): Promise<boolean> {
+  const hex = pubkey.trim().toLowerCase()
+  if (!HEX_PUBKEY.test(hex)) return false
+
+  const pool = new SimplePool()
+  try {
+    const events = await pool.querySync(
+      [VERTEX_RELAY],
+      {
+        kinds: [0],
+        authors: [hex],
+        limit: 1,
+      },
+      { maxWait: SEARCH_MAX_WAIT_MS },
+    )
+    return events.some(
+      (event) => event.kind === 0 && event.pubkey.toLowerCase() === hex,
+    )
+  } catch {
+    return false
+  } finally {
+    pool.destroy()
+  }
+}
+
 export async function searchProfiles(
   query: string,
   options?: { limit?: number; signal?: AbortSignal },
