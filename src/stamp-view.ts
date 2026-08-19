@@ -247,7 +247,7 @@ export function renderStampPanel(): HTMLElement {
   queueMicrotask(() => drawPreview())
   void document.fonts.ready.then(() => {
     if (session.image) applyFittedScales('current')
-    if (stampDialog?.open) refreshStampDom()
+    refreshStampDom()
   })
   return panel
 }
