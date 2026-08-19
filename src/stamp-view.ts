@@ -381,19 +381,9 @@ function verdictButton(verdict: StampVerdict): HTMLButtonElement {
   )
   button.textContent = verdict
   button.addEventListener('click', () => {
+    session.scales[session.placement.verdict] = session.placement.scale
     session.placement.verdict = verdict
     session.placement.scale = session.scales[verdict]
-    const ctx = session.image ? stampMeasureCtx() : undefined
-    if (ctx && session.image) {
-      session.placement.scale = fitStampScale(
-        ctx,
-        session.placement,
-        session.image.naturalWidth,
-        session.image.naturalHeight,
-        session.scales[verdict],
-      )
-      session.scales[verdict] = session.placement.scale
-    }
     keepStampOnPhoto()
     const slider = document.querySelector<HTMLInputElement>('#stamp-scale')
     if (slider) slider.value = String(session.placement.scale)
