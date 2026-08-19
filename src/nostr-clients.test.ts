@@ -7,6 +7,7 @@ import {
   clientsForPlatform,
   detectClientPlatform,
   encodeNevent,
+  encodeNpub,
   isWebClientHref,
   MAX_RELAY_HINTS,
 } from './nostr-clients'
@@ -91,6 +92,22 @@ describe('clientHref', () => {
     expect(isWebClientHref('https://jumble.social/nevent1abc')).toBe(true)
     expect(isWebClientHref('nostr:nevent1abc')).toBe(false)
   })
+
+  it('uses profile paths when they differ from note URLs', () => {
+    const primal = clientsForPlatform('web').find((c) => c.id === 'primal-web')
+    const jumble = clientsForPlatform('web').find((c) => c.id === 'jumble')
+    expect(primal).toBeDefined()
+    expect(jumble).toBeDefined()
+    expect(clientHref(primal!, 'npub1abc', 'profile')).toBe(
+      'https://primal.net/p/npub1abc',
+    )
+    expect(clientHref(primal!, 'nevent1abc', 'note')).toBe(
+      'https://primal.net/e/nevent1abc',
+    )
+    expect(clientHref(jumble!, 'npub1abc', 'profile')).toBe(
+      'https://jumble.social/npub1abc',
+    )
+  })
 })
 
 describe('encodeNevent', () => {
@@ -110,6 +127,10 @@ describe('encodeNevent', () => {
       'wss://nos.lol',
       'wss://relay.primal.net',
     ])
+  })
+
+  it('encodes a pubkey as npub', () => {
+    expect(encodeNpub(PUBKEY)).toBe(nip19.npubEncode(PUBKEY))
   })
 
   it('caps relay hints so the bech32 string stays short', () => {
