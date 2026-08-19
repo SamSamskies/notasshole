@@ -107,6 +107,7 @@ let comboboxCleanup: (() => void) | undefined
 let lastInput = ''
 let docketList: DocketCase[] | undefined
 let docketRefresh: Promise<void> | undefined
+let resultBeforeStamp: Extract<AppState, { view: 'result' }> | undefined
 
 function rememberDocketCase(snapshot: DocketCase) {
   const rest = (docketList ?? []).filter(
@@ -262,6 +263,7 @@ function goStamp() {
     history.pushState({ view: 'stamp' }, '', appPath({ stamp: true }))
   }
   if (state.view === 'stamp') return
+  resultBeforeStamp = state.view === 'result' ? state : undefined
   setState({ view: 'stamp' })
 }
 
@@ -1137,6 +1139,7 @@ async function judge(raw: string) {
 window.addEventListener('popstate', () => {
   const id = docketIdFromSearch()
   if (id) {
+    resultBeforeStamp = undefined
     void openSnapshot(id)
     return
   }
@@ -1146,6 +1149,15 @@ window.addEventListener('popstate', () => {
     setState({ view: 'stamp' })
     return
   }
+  if (state.view === 'stamp' && resultBeforeStamp) {
+    const restored = resultBeforeStamp
+    resultBeforeStamp = undefined
+    abortController?.abort()
+    stopLoadingCycle()
+    setState(restored)
+    return
+  }
+  resultBeforeStamp = undefined
   if (state.view !== 'idle') {
     abortController?.abort()
     stopLoadingCycle()
