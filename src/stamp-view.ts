@@ -408,6 +408,7 @@ async function adoptFile(file: File) {
     refreshStampDom()
     return
   }
+  sessionGeneration += 1
   const generation = sessionGeneration
   const objectUrl = URL.createObjectURL(file)
   try {
@@ -440,6 +441,7 @@ function adoptImage(image: HTMLImageElement, objectUrl: string) {
 }
 
 function clearPhoto() {
+  sessionGeneration += 1
   if (session.objectUrl) URL.revokeObjectURL(session.objectUrl)
   session.image = null
   session.objectUrl = null
