@@ -147,7 +147,8 @@ body::before {
 }
 
 .panel.stamp-panel {
-  width: min(42rem, 100%);
+  width: 100%;
+  box-shadow: none;
 }
 
 @keyframes rise {
@@ -1120,6 +1121,200 @@ a.open-in-link:focus-visible {
   accent-color: var(--mustard-deep);
 }
 
+.stamp-launcher {
+  position: fixed;
+  top: 0.8rem;
+  right: 0.8rem;
+  z-index: 8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.7rem;
+  height: 2.7rem;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: #fff;
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+
+.stamp-launcher:hover {
+  border-color: var(--mustard-deep);
+  color: var(--mustard-deep);
+}
+
+.stamp-launcher:focus-visible {
+  outline: 2px solid var(--mustard-deep);
+  outline-offset: 2px;
+}
+
+.stamp-launcher-icon {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+
+.stamp-overlay {
+  width: 100vw;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.stamp-overlay[open] {
+  display: flex;
+  justify-content: flex-end;
+  align-items: stretch;
+}
+
+.stamp-overlay::backdrop {
+  background: rgba(20, 24, 32, 0.42);
+}
+
+.stamp-sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(32rem, 100%);
+  height: 100%;
+  overflow: auto;
+  padding: 0.65rem 1rem 1.35rem;
+  border-left: 1px solid var(--line);
+  background:
+    linear-gradient(180deg, #f4f6f9 0%, var(--paper) 38%, #e7ebf1 100%);
+  box-shadow: -18px 0 40px rgba(20, 24, 32, 0.12);
+  animation: stamp-sheet-in 0.32s ease-out both;
+}
+
+.stamp-drawer-chrome {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 0.15rem;
+}
+
+.stamp-drawer-close,
+.docket-dialog-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.15rem;
+  height: 2.15rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 1.55rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.stamp-drawer-close svg {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.stamp-drawer-close:hover,
+.docket-dialog-close:hover {
+  color: var(--ink);
+  background: rgba(20, 24, 32, 0.06);
+}
+
+.stamp-drawer-close:focus-visible,
+.docket-dialog-close:focus-visible {
+  outline: 2px solid var(--mustard-deep);
+  outline-offset: 2px;
+}
+
+.stamp-overlay .stamp-heading {
+  margin-top: 0;
+}
+
+.stamp-overlay .actions {
+  margin-top: 1rem;
+}
+
+.stamp-drawer-disclaimer {
+  margin-top: 1rem;
+}
+
+.docket-dialog {
+  width: min(34rem, calc(100vw - 1.25rem));
+  max-height: min(92dvh, calc(100vh - 1.25rem));
+  overflow: auto;
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+}
+
+.docket-dialog::backdrop {
+  background: rgba(20, 24, 32, 0.48);
+}
+
+.docket-dialog-sheet {
+  display: flex;
+  flex-direction: column;
+}
+
+.docket-dialog-chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0.7rem 0.15rem 1.15rem;
+}
+
+.docket-dialog-kicker {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mustard-deep);
+}
+
+.docket-dialog-status {
+  margin: 0;
+  padding: 1.5rem 1.25rem 1.75rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.docket-dialog .result-panel {
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  padding: 0.5rem 1.25rem 0.35rem;
+}
+
+.docket-dialog .actions {
+  margin: 0;
+  padding: 0.35rem 1.25rem 1.25rem;
+}
+
+@keyframes stamp-sheet-in {
+  from {
+    opacity: 0.35;
+    transform: translateX(1.1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 .site-footer {
   position: relative;
   z-index: 1;
@@ -1161,11 +1356,6 @@ a.open-in-link:focus-visible {
 .footer-links a:hover,
 .zap-button:hover {
   color: var(--ink);
-}
-
-.footer-stamp[aria-current='page'] {
-  color: var(--ink);
-  text-decoration: none;
 }
 
 .footer-links a:focus-visible,
@@ -1214,6 +1404,30 @@ a.open-in-link:focus-visible {
   .actions .primary,
   .actions .secondary {
     width: 100%;
+  }
+
+  .stamp-overlay[open] {
+    align-items: flex-end;
+  }
+
+  .stamp-sheet {
+    width: 100%;
+    height: min(92dvh, 100%);
+    border-left: none;
+    border-top: 1px solid var(--line);
+    border-radius: 16px 16px 0 0;
+    animation-name: stamp-sheet-up;
+  }
+}
+
+@keyframes stamp-sheet-up {
+  from {
+    opacity: 0.35;
+    transform: translateY(1.1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
