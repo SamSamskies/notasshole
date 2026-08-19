@@ -95,9 +95,112 @@ export function clampStampScale(value: number): number {
   return Math.min(STAMP_SCALE_MAX, Math.max(STAMP_SCALE_MIN, value))
 }
 
+export const DEFAULT_STAMP_SCALES: Record<StampVerdict, number> = {
+  ASSHOLE: STAMP_SCALE_DEFAULT,
+  'NOT ASSHOLE': STAMP_SCALE_DEFAULT,
+}
+
 export function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0.5
   return Math.min(1, Math.max(0, value))
+}
+
+export function stampFontSize(imageWidth: number, scale: number): number {
+  return Math.max(14, imageWidth * 0.078 * scale)
+}
+
+export function stampStrokeWidth(imageWidth: number, scale: number): number {
+  return Math.max(3, stampFontSize(imageWidth, scale) * 0.08)
+}
+
+/** Inset as a fraction of the photo so the stamp does not sit flush to the crop. */
+const STAMP_EDGE_INSET: Record<StampVerdict, { x: number; y: number }> = {
+  ASSHOLE: { x: 0.025, y: 0.02 },
+  'NOT ASSHOLE': { x: 0.06, y: 0.02 },
+}
+
+export function stampAabbSize(
+  box: Pick<StampBox, 'width' | 'height' | 'rotation'>,
+): { width: number; height: number } {
+  const cos = Math.abs(Math.cos(box.rotation))
+  const sin = Math.abs(Math.sin(box.rotation))
+  return {
+    width: box.width * cos + box.height * sin,
+    height: box.width * sin + box.height * cos,
+  }
+}
+
+export function stampOccupiedSize(
+  box: Pick<StampBox, 'width' | 'height' | 'rotation'>,
+  placement: Pick<StampPlacement, 'scale' | 'verdict'>,
+  imageWidth: number,
+  imageHeight: number,
+): { width: number; height: number } {
+  const aabb = stampAabbSize(box)
+  const stroke = stampStrokeWidth(imageWidth, placement.scale)
+  const inset = STAMP_EDGE_INSET[placement.verdict]
+  return {
+    width: aabb.width + stroke + imageWidth * inset.x * 2,
+    height: aabb.height + stroke + imageHeight * inset.y * 2,
+  }
+}
+
+export function clampStampCenter(
+  nx: number,
+  ny: number,
+  aabbWidth: number,
+  aabbHeight: number,
+  imageWidth: number,
+  imageHeight: number,
+): { nx: number; ny: number } {
+  const halfNx = imageWidth > 0 ? aabbWidth / 2 / imageWidth : 0.5
+  const halfNy = imageHeight > 0 ? aabbHeight / 2 / imageHeight : 0.5
+  return {
+    nx: halfNx >= 0.5 ? 0.5 : Math.min(1 - halfNx, Math.max(halfNx, clamp01(nx))),
+    ny: halfNy >= 0.5 ? 0.5 : Math.min(1 - halfNy, Math.max(halfNy, clamp01(ny))),
+  }
+}
+
+function stampFitsImage(
+  ctx: CanvasRenderingContext2D,
+  placement: StampPlacement,
+  imageWidth: number,
+  imageHeight: number,
+): boolean {
+  const occupied = stampOccupiedSize(
+    measureStamp(ctx, placement, imageWidth, imageHeight),
+    placement,
+    imageWidth,
+    imageHeight,
+  )
+  return occupied.width <= imageWidth && occupied.height <= imageHeight
+}
+
+/** Largest scale at or below `desiredScale` whose stamp stays inside the photo. */
+export function fitStampScale(
+  ctx: CanvasRenderingContext2D,
+  placement: StampPlacement,
+  imageWidth: number,
+  imageHeight: number,
+  desiredScale = placement.scale,
+): number {
+  const desired = clampStampScale(desiredScale)
+  const atDesired = { ...placement, scale: desired }
+  if (stampFitsImage(ctx, atDesired, imageWidth, imageHeight)) return desired
+  let lo = STAMP_SCALE_MIN
+  let hi = desired
+  if (!stampFitsImage(ctx, { ...placement, scale: lo }, imageWidth, imageHeight)) {
+    return lo
+  }
+  for (let i = 0; i < 18; i++) {
+    const mid = (lo + hi) / 2
+    if (stampFitsImage(ctx, { ...placement, scale: mid }, imageWidth, imageHeight)) {
+      lo = mid
+    } else {
+      hi = mid
+    }
+  }
+  return clampStampScale(lo)
 }
 
 export function fitContain(
@@ -173,7 +276,7 @@ export function measureStamp(
   imageWidth: number,
   imageHeight: number,
 ): StampBox {
-  const fontSize = Math.max(14, imageWidth * 0.078 * placement.scale)
+  const fontSize = stampFontSize(imageWidth, placement.scale)
   ctx.font = stampFont(fontSize)
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
@@ -220,9 +323,9 @@ export function drawStamp(
   imageHeight: number,
 ): StampBox {
   const box = measureStamp(ctx, placement, imageWidth, imageHeight)
-  const fontSize = Math.max(14, imageWidth * 0.078 * placement.scale)
+  const fontSize = stampFontSize(imageWidth, placement.scale)
   const colors = STAMP_INK[placement.verdict]
-  const border = Math.max(3, fontSize * 0.08)
+  const border = stampStrokeWidth(imageWidth, placement.scale)
   const radius = fontSize * 0.18
 
   ctx.save()

@@ -1,11 +1,13 @@
 import {
   canvasToBlob,
-  clamp01,
+  clampStampCenter,
   clampStampScale,
   DEFAULT_STAMP_PLACEMENT,
+  DEFAULT_STAMP_SCALES,
   drawStampedPhoto,
   exportStampedCanvas,
   fitContain,
+  fitStampScale,
   imageFileError,
   loadHtmlImage,
   measureStamp,
@@ -15,6 +17,7 @@ import {
   STAMP_SCALE_DEFAULT,
   STAMP_SCALE_MAX,
   STAMP_SCALE_MIN,
+  stampOccupiedSize,
   stampFilename,
   type StampBox,
   type StampPlacement,
@@ -28,6 +31,7 @@ type StampSession = {
   image: HTMLImageElement | null
   objectUrl: string | null
   placement: StampPlacement
+  scales: Record<StampVerdict, number>
   error: string | null
 }
 
@@ -35,6 +39,7 @@ const session: StampSession = {
   image: null,
   objectUrl: null,
   placement: { ...DEFAULT_STAMP_PLACEMENT },
+  scales: { ...DEFAULT_STAMP_SCALES },
   error: null,
 }
 
@@ -60,6 +65,7 @@ export function resetStampSession() {
   session.image = null
   session.objectUrl = null
   session.placement = { ...DEFAULT_STAMP_PLACEMENT }
+  session.scales = { ...DEFAULT_STAMP_SCALES }
   session.error = null
   drag = undefined
   lastBox = undefined
@@ -240,7 +246,8 @@ export function renderStampPanel(): HTMLElement {
   bindPanelDrop(panel)
   queueMicrotask(() => drawPreview())
   void document.fonts.ready.then(() => {
-    if (stampDialog?.open) drawPreview()
+    if (session.image) applyFittedScales('current')
+    refreshStampDom()
   })
   return panel
 }
@@ -355,6 +362,8 @@ function renderEditor(): HTMLElement {
   slider.value = String(session.placement.scale)
   slider.addEventListener('input', () => {
     session.placement.scale = clampStampScale(Number(slider.value))
+    session.scales[session.placement.verdict] = session.placement.scale
+    keepStampOnPhoto()
     drawPreview()
   })
 
@@ -373,7 +382,12 @@ function verdictButton(verdict: StampVerdict): HTMLButtonElement {
   )
   button.textContent = verdict
   button.addEventListener('click', () => {
+    session.scales[session.placement.verdict] = session.placement.scale
     session.placement.verdict = verdict
+    session.placement.scale = session.scales[verdict]
+    keepStampOnPhoto()
+    const slider = document.querySelector<HTMLInputElement>('#stamp-scale')
+    if (slider) slider.value = String(session.placement.scale)
     for (const other of button.parentElement?.querySelectorAll('.stamp-verdict') ??
       []) {
       other.setAttribute(
@@ -443,12 +457,30 @@ function bindCanvas(canvas: HTMLCanvasElement) {
       session.image.naturalHeight,
     )
     if (drag && event.pointerId === drag.pointerId) {
-      session.placement.nx = clamp01(
-        (point.x - drag.grabDx) / session.image.naturalWidth,
-      )
-      session.placement.ny = clamp01(
-        (point.y - drag.grabDy) / session.image.naturalHeight,
-      )
+      const nextNx = (point.x - drag.grabDx) / session.image.naturalWidth
+      const nextNy = (point.y - drag.grabDy) / session.image.naturalHeight
+      const box = lastBox ?? measureOnImage()
+      if (box) {
+        const occupied = stampOccupiedSize(
+          box,
+          session.placement,
+          session.image.naturalWidth,
+          session.image.naturalHeight,
+        )
+        const clamped = clampStampCenter(
+          nextNx,
+          nextNy,
+          occupied.width,
+          occupied.height,
+          session.image.naturalWidth,
+          session.image.naturalHeight,
+        )
+        session.placement.nx = clamped.nx
+        session.placement.ny = clamped.ny
+      } else {
+        session.placement.nx = Math.min(1, Math.max(0, nextNx))
+        session.placement.ny = Math.min(1, Math.max(0, nextNy))
+      }
       drawPreview()
       return
     }
@@ -478,7 +510,7 @@ function bindCanvas(canvas: HTMLCanvasElement) {
 
 function measureOnImage(): StampBox | undefined {
   if (!session.image) return undefined
-  const ctx = document.createElement('canvas').getContext('2d')
+  const ctx = stampMeasureCtx()
   if (!ctx) return undefined
   return measureStamp(
     ctx,
@@ -567,14 +599,66 @@ function adoptImage(image: HTMLImageElement, objectUrl: string) {
   if (session.objectUrl) URL.revokeObjectURL(session.objectUrl)
   session.image = image
   session.objectUrl = objectUrl
+  const verdict = session.placement.verdict
   session.placement = {
-    ...session.placement,
-    nx: DEFAULT_STAMP_PLACEMENT.nx,
-    ny: DEFAULT_STAMP_PLACEMENT.ny,
-    scale: STAMP_SCALE_DEFAULT,
+    ...DEFAULT_STAMP_PLACEMENT,
+    verdict,
   }
+  applyFittedScales(STAMP_SCALE_DEFAULT)
   session.error = null
   refreshStampDom()
+}
+
+/** Fit per-verdict scales so the stamp stays inside the photo with current font metrics. */
+function applyFittedScales(desiredScale: number | 'current') {
+  const image = session.image
+  if (!image) return
+  const verdict = session.placement.verdict
+  const ctx = stampMeasureCtx()
+  if (!ctx) {
+    session.scales = { ...DEFAULT_STAMP_SCALES }
+    session.placement.scale = session.scales[verdict]
+    return
+  }
+  for (const option of ['ASSHOLE', 'NOT ASSHOLE'] as const) {
+    const desired =
+      desiredScale === 'current' ? session.scales[option] : desiredScale
+    session.scales[option] = fitStampScale(
+      ctx,
+      { ...session.placement, verdict: option, scale: desired },
+      image.naturalWidth,
+      image.naturalHeight,
+      desired,
+    )
+  }
+  session.placement.scale = session.scales[verdict]
+  keepStampOnPhoto()
+}
+
+function stampMeasureCtx(): CanvasRenderingContext2D | undefined {
+  return document.createElement('canvas').getContext('2d') ?? undefined
+}
+
+function keepStampOnPhoto() {
+  if (!session.image) return
+  const box = measureOnImage()
+  if (!box) return
+  const occupied = stampOccupiedSize(
+    box,
+    session.placement,
+    session.image.naturalWidth,
+    session.image.naturalHeight,
+  )
+  const clamped = clampStampCenter(
+    session.placement.nx,
+    session.placement.ny,
+    occupied.width,
+    occupied.height,
+    session.image.naturalWidth,
+    session.image.naturalHeight,
+  )
+  session.placement.nx = clamped.nx
+  session.placement.ny = clamped.ny
 }
 
 function clearPhoto() {
@@ -663,6 +747,7 @@ async function downloadStamp() {
   if (!session.image) return
   try {
     await document.fonts.ready
+    if (!session.image) return
     const canvas = exportStampedCanvas(session.image, session.placement)
     const blob = await canvasToBlob(canvas)
     saveBlob(blob, stampFilename(session.placement.verdict))
