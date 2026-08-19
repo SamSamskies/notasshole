@@ -246,7 +246,8 @@ export function renderStampPanel(): HTMLElement {
   bindPanelDrop(panel)
   queueMicrotask(() => drawPreview())
   void document.fonts.ready.then(() => {
-    if (stampDialog?.open) drawPreview()
+    if (session.image) applyFittedScales('current')
+    if (stampDialog?.open) refreshStampDom()
   })
   return panel
 }
@@ -603,24 +604,35 @@ function adoptImage(image: HTMLImageElement, objectUrl: string) {
     ...DEFAULT_STAMP_PLACEMENT,
     verdict,
   }
+  applyFittedScales(STAMP_SCALE_DEFAULT)
+  session.error = null
+  refreshStampDom()
+}
+
+/** Fit per-verdict scales so the stamp stays inside the photo with current font metrics. */
+function applyFittedScales(desiredScale: number | 'current') {
+  const image = session.image
+  if (!image) return
+  const verdict = session.placement.verdict
   const ctx = stampMeasureCtx()
-  if (ctx) {
-    for (const option of ['ASSHOLE', 'NOT ASSHOLE'] as const) {
-      session.scales[option] = fitStampScale(
-        ctx,
-        { ...session.placement, verdict: option, scale: STAMP_SCALE_DEFAULT },
-        image.naturalWidth,
-        image.naturalHeight,
-        STAMP_SCALE_DEFAULT,
-      )
-    }
-  } else {
+  if (!ctx) {
     session.scales = { ...DEFAULT_STAMP_SCALES }
+    session.placement.scale = session.scales[verdict]
+    return
+  }
+  for (const option of ['ASSHOLE', 'NOT ASSHOLE'] as const) {
+    const desired =
+      desiredScale === 'current' ? session.scales[option] : desiredScale
+    session.scales[option] = fitStampScale(
+      ctx,
+      { ...session.placement, verdict: option, scale: desired },
+      image.naturalWidth,
+      image.naturalHeight,
+      desired,
+    )
   }
   session.placement.scale = session.scales[verdict]
   keepStampOnPhoto()
-  session.error = null
-  refreshStampDom()
 }
 
 function stampMeasureCtx(): CanvasRenderingContext2D | undefined {
@@ -735,6 +747,9 @@ async function downloadStamp() {
   if (!session.image) return
   try {
     await document.fonts.ready
+    if (!session.image) return
+    applyFittedScales('current')
+    refreshStampDom()
     const canvas = exportStampedCanvas(session.image, session.placement)
     const blob = await canvasToBlob(canvas)
     saveBlob(blob, stampFilename(session.placement.verdict))
