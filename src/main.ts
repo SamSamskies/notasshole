@@ -50,6 +50,15 @@ import {
   type DocketCard,
   type DocketCase,
 } from './docket'
+import { isStampSearch } from './stamp'
+import {
+  attachStampWindowListeners,
+  renderStampActions,
+  renderStampPanel,
+  resetStampSession,
+  STAMP_DISCLAIMER,
+  STAMP_TAGLINE,
+} from './stamp-view'
 
 const FETCH_LOADING_MESSAGES = [
   'SEARCHING THE RELAYS...',
@@ -67,6 +76,7 @@ const INFERENCE_LOADING_MESSAGES = [
 
 type AppState =
   | { view: 'idle' }
+  | { view: 'stamp' }
   | { view: 'loading'; message: string }
   | {
       view: 'consent'
@@ -226,21 +236,36 @@ function refreshDocket() {
   return docketRefresh
 }
 
-function docketPath(id?: string): string {
+function appPath(opts?: { docket?: string; stamp?: boolean }): string {
   const url = new URL(location.href)
-  if (id) url.searchParams.set('docket', id)
-  else url.searchParams.delete('docket')
+  url.searchParams.delete('docket')
+  url.searchParams.delete('stamp')
+  if (opts?.docket) url.searchParams.set('docket', opts.docket)
+  if (opts?.stamp) url.searchParams.set('stamp', '1')
   const query = url.searchParams.toString()
   return query ? `${url.pathname}?${query}` : url.pathname
 }
 
-function goIdle() {
+function cancelInFlight() {
   abortController?.abort()
   stopLoadingCycle()
-  if (docketIdFromSearch()) {
-    history.pushState({ view: 'idle' }, '', docketPath())
+}
+
+function goIdle() {
+  cancelInFlight()
+  if (docketIdFromSearch() || isStampSearch()) {
+    history.pushState({ view: 'idle' }, '', appPath())
   }
   setState({ view: 'idle' })
+}
+
+function goStamp() {
+  cancelInFlight()
+  if (!isStampSearch() || docketIdFromSearch()) {
+    history.pushState({ view: 'stamp' }, '', appPath({ stamp: true }))
+  }
+  if (state.view === 'stamp') return
+  setState({ view: 'stamp' })
 }
 
 function applySnapshot(snapshot: DocketCase) {
@@ -272,7 +297,7 @@ async function openSnapshot(
   options?: { pushUrl?: boolean },
 ) {
   if (options?.pushUrl) {
-    history.pushState({ view: 'snapshot', id }, '', docketPath(id))
+    history.pushState({ view: 'snapshot', id }, '', appPath({ docket: id }))
   }
 
   abortController?.abort()
@@ -322,6 +347,10 @@ function displayModelName(model: string | undefined): string {
 }
 
 function setState(next: AppState) {
+  if (state.view === 'stamp' && next.view !== 'stamp') resetStampSession()
+  if (state.view === 'consent' && next.view !== 'consent') {
+    state.resolve(false)
+  }
   state = next
   render()
 }
@@ -360,10 +389,13 @@ function startLoadingCycle(messages: string[]) {
 
 function askGeminiConsent(): Promise<boolean> {
   return new Promise((resolve) => {
+    let settled = false
     stopLoadingCycle()
     setState({
       view: 'consent',
       resolve: (ok) => {
+        if (settled) return
+        settled = true
         setGeminiConsent(ok)
         if (ok) startLoadingCycle(INFERENCE_LOADING_MESSAGES)
         resolve(ok)
@@ -378,16 +410,23 @@ const DISCLAIMER_TEXT =
 const SNAPSHOT_DISCLAIMER_TEXT =
   'Entertainment only. This is a snapshot of public notes at judgement time.'
 
-function createDisclaimer(snapshot = false): HTMLParagraphElement {
+function createDisclaimer(snapshot = false, text?: string): HTMLParagraphElement {
   const disclaimer = document.createElement('p')
   disclaimer.className = 'disclaimer'
-  disclaimer.textContent = snapshot ? SNAPSHOT_DISCLAIMER_TEXT : DISCLAIMER_TEXT
+  disclaimer.textContent =
+    text ?? (snapshot ? SNAPSHOT_DISCLAIMER_TEXT : DISCLAIMER_TEXT)
   return disclaimer
 }
 
 function renderShell(
   content: HTMLElement,
-  options?: { after?: HTMLElement; disclaimer?: boolean },
+  options?: {
+    after?: HTMLElement
+    disclaimer?: boolean
+    disclaimerText?: string
+    tagline?: string
+    brandHome?: boolean
+  },
 ) {
   app.replaceChildren()
 
@@ -397,19 +436,28 @@ function renderShell(
   const header = document.createElement('header')
   header.className = 'hero'
 
-  const brand = document.createElement('p')
+  const brand = options?.brandHome
+    ? document.createElement('button')
+    : document.createElement('p')
   brand.className = 'brand'
   brand.textContent = 'ASSHOLE DETECTOR'
+  if (brand instanceof HTMLButtonElement) {
+    brand.type = 'button'
+    brand.title = 'Back to the detector'
+    brand.addEventListener('click', () => goIdle())
+  }
 
   const tagline = document.createElement('p')
   tagline.className = 'tagline'
   tagline.textContent =
-    'Advanced AI-powered Nostr personality analysis.'
+    options?.tagline ?? 'Advanced AI-powered Nostr personality analysis.'
 
   header.append(brand, tagline)
   shell.append(header, content)
   if (options?.after) shell.append(options.after)
-  if (options?.disclaimer !== false) shell.append(createDisclaimer())
+  if (options?.disclaimer !== false) {
+    shell.append(createDisclaimer(false, options?.disclaimerText))
+  }
   app.append(shell)
 }
 
@@ -819,6 +867,14 @@ function render() {
       document.querySelector<HTMLInputElement>('#identity')?.focus()
       void refreshDocket()
       break
+    case 'stamp':
+      renderShell(renderStampPanel(), {
+        after: renderStampActions(),
+        tagline: STAMP_TAGLINE,
+        brandHome: true,
+        disclaimerText: STAMP_DISCLAIMER,
+      })
+      break
     case 'loading':
       renderLoading(state.message)
       break
@@ -843,6 +899,8 @@ function render() {
       )
       break
   }
+
+  syncStampFooter()
 }
 
 function isActiveJudge(signal: AbortSignal): boolean {
@@ -874,7 +932,7 @@ async function resolveSubmittedIdentity(
 async function judge(raw: string) {
   lastInput = raw.trim()
   if (docketIdFromSearch()) {
-    history.replaceState({ view: 'judge' }, '', docketPath())
+    history.replaceState({ view: 'judge' }, '', appPath())
   }
   abortController?.abort()
   abortController = new AbortController()
@@ -1085,22 +1143,45 @@ async function judge(raw: string) {
   }
 }
 
-window.addEventListener('popstate', () => {
+function applyLocation() {
   const id = docketIdFromSearch()
   if (id) {
     void openSnapshot(id)
     return
   }
-  if (state.view !== 'idle') {
-    abortController?.abort()
-    stopLoadingCycle()
-    setState({ view: 'idle' })
+  if (isStampSearch()) {
+    cancelInFlight()
+    if (state.view !== 'stamp') setState({ view: 'stamp' })
+    return
   }
+  cancelInFlight()
+  if (state.view !== 'idle') setState({ view: 'idle' })
+}
+
+window.addEventListener('popstate', applyLocation)
+
+function syncStampFooter() {
+  const link = document.querySelector<HTMLAnchorElement>('.footer-stamp')
+  if (!link) return
+  link.setAttribute('aria-current', state.view === 'stamp' ? 'page' : 'false')
+}
+
+document.querySelector('.footer-stamp')?.addEventListener('click', (event) => {
+  if (!(event instanceof MouseEvent)) return
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  if (event.button !== 0) return
+  event.preventDefault()
+  goStamp()
 })
+
+attachStampWindowListeners(() => state.view === 'stamp')
 
 const bootId = docketIdFromSearch()
 if (bootId) {
   void openSnapshot(bootId)
+} else if (isStampSearch()) {
+  setState({ view: 'stamp' })
 } else {
   render()
 }
+syncStampFooter()

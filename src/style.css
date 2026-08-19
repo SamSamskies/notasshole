@@ -146,6 +146,10 @@ body::before {
   align-self: center;
 }
 
+.panel.stamp-panel {
+  width: min(42rem, 100%);
+}
+
 @keyframes rise {
   from {
     opacity: 0;
@@ -171,6 +175,25 @@ body::before {
   line-height: 0.95;
   text-transform: uppercase;
   overflow-wrap: break-word;
+}
+
+button.brand {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+button.brand:hover {
+  color: #000;
+}
+
+button.brand:focus-visible {
+  outline: 2px solid var(--mustard-deep);
+  outline-offset: 4px;
 }
 
 .tagline {
@@ -914,6 +937,189 @@ a.open-in-link:focus-visible {
   border-top: 1px solid var(--line);
 }
 
+.stamp-heading {
+  text-align: center;
+  margin-bottom: 1.05rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.stamp-kicker {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mustard-deep);
+}
+
+.stamp-title {
+  margin: 0.35rem 0 0;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.45rem;
+  letter-spacing: -0.03em;
+  text-transform: uppercase;
+}
+
+.stamp-blurb {
+  margin: 0.45rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  overflow-wrap: break-word;
+}
+
+.stamp-error {
+  margin: 0 0 0.85rem;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.9rem;
+  line-height: 1.35;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border: 1px solid rgba(138, 90, 0, 0.28);
+  border-radius: 8px;
+}
+
+.stamp-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 9.5rem;
+  padding: 1.4rem 1rem;
+  border: 2px dashed var(--line);
+  border-radius: 14px;
+  background:
+    repeating-linear-gradient(
+      -18deg,
+      transparent 0 10px,
+      rgba(20, 24, 32, 0.025) 10px 11px
+    ),
+    #fff;
+  cursor: pointer;
+}
+
+.stamp-drop:hover,
+.stamp-drop.is-hot,
+.stamp-drop:focus-within {
+  border-color: var(--mustard-deep);
+  background-color: rgba(226, 176, 18, 0.1);
+}
+
+.stamp-drop-title {
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.stamp-drop-hint {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.stamp-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.stamp-editor[hidden],
+.stamp-intake[hidden],
+.stamp-error[hidden] {
+  display: none;
+}
+
+.stamp-stage {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 12rem;
+  padding: 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background:
+    linear-gradient(#dfe5ee, #dfe5ee) padding-box,
+    repeating-conic-gradient(#d0d7e1 0% 25%, #e7ebf1 0% 50%) 0 0 / 18px 18px;
+  overflow: hidden;
+}
+
+.stamp-stage canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  touch-action: none;
+  cursor: default;
+}
+
+.stamp-stage canvas.over-stamp {
+  cursor: grab;
+}
+
+.stamp-stage canvas.dragging {
+  cursor: grabbing;
+}
+
+.stamp-verdicts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.stamp-verdict {
+  font: inherit;
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border-radius: 10px;
+  padding: 0.7rem 0.6rem;
+  cursor: pointer;
+  border: 2px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+}
+
+.stamp-verdict.bad[aria-pressed='true'] {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}
+
+.stamp-verdict.good[aria-pressed='true'] {
+  color: var(--ok);
+  background: var(--ok-soft);
+  border-color: var(--ok);
+}
+
+.stamp-verdict:focus-visible {
+  outline: 2px solid var(--mustard-deep);
+  outline-offset: 2px;
+}
+
+.stamp-size {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.stamp-size label {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.stamp-size input[type='range'] {
+  width: 100%;
+  accent-color: var(--mustard-deep);
+}
+
 .site-footer {
   position: relative;
   z-index: 1;
@@ -955,6 +1161,11 @@ a.open-in-link:focus-visible {
 .footer-links a:hover,
 .zap-button:hover {
   color: var(--ink);
+}
+
+.footer-stamp[aria-current='page'] {
+  color: var(--ink);
+  text-decoration: none;
 }
 
 .footer-links a:focus-visible,
