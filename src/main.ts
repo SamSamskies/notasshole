@@ -170,7 +170,7 @@ function renderDocketCard(card: DocketCard): HTMLButtonElement {
     `${name}, ${card.verdict}${when ? `, filed ${when}` : ''}`,
   )
   button.addEventListener('click', () => {
-    void openSnapshot(card.id, { pushUrl: true })
+    void openSnapshot(card.id)
   })
 
   const mugshot = document.createElement('div')
@@ -248,6 +248,16 @@ function appPath(overlay: 'none' | 'stamp' | { docket: string }): string {
   return overlaySearch(location.href, overlay)
 }
 
+function locationPath(): string {
+  return `${location.pathname}${location.search}${location.hash}`
+}
+
+function syncOverlayUrl(overlay: 'none' | 'stamp' | { docket: string }) {
+  const next = appPath(overlay)
+  if (next === locationPath()) return
+  history.replaceState(history.state, '', next)
+}
+
 function cancelInFlight() {
   abortController?.abort()
   stopLoadingCycle()
@@ -257,25 +267,18 @@ function goIdle() {
   cancelInFlight()
   closeStamp({ replaceUrl: true })
   closeDocket({ replaceUrl: true })
-  if (docketIdFromSearch() || isStampSearch()) {
-    history.pushState({ view: 'idle' }, '', appPath('none'))
-  }
   setState({ view: 'idle' })
 }
 
 function openStamp() {
   closeDocket({ replaceUrl: false })
-  if (!isStampSearch()) {
-    history.pushState({ view: 'stamp' }, '', appPath('stamp'))
-  }
+  syncOverlayUrl('stamp')
   setStampOverlayOpen(true)
 }
 
 function closeStamp(options?: { replaceUrl?: boolean }) {
   setStampOverlayOpen(false)
-  if (options?.replaceUrl !== false && isStampSearch()) {
-    history.replaceState(history.state, '', appPath('none'))
-  }
+  if (options?.replaceUrl !== false) syncOverlayUrl('none')
 }
 
 function applySnapshot(snapshot: DocketCase) {
@@ -283,16 +286,14 @@ function applySnapshot(snapshot: DocketCase) {
   syncDocketDialog()
 }
 
-async function openSnapshot(id: string, options?: { pushUrl?: boolean }) {
+async function openSnapshot(id: string) {
   closeStamp({ replaceUrl: false })
   if (state.view !== 'idle') {
     cancelInFlight()
     setState({ view: 'idle' })
   }
 
-  if (options?.pushUrl) {
-    history.pushState({ view: 'snapshot', id }, '', appPath({ docket: id }))
-  }
+  syncOverlayUrl({ docket: id })
 
   snapshotAbort?.abort()
   snapshotAbort = new AbortController()
@@ -323,17 +324,13 @@ function closeDocket(options?: { replaceUrl?: boolean }) {
   snapshotAbort?.abort()
   docketOverlay = { status: 'closed' }
   if (!docketDialog?.open) {
-    if (options?.replaceUrl !== false && docketIdFromSearch()) {
-      history.replaceState(history.state, '', appPath('none'))
-    }
+    if (options?.replaceUrl !== false) syncOverlayUrl('none')
     return
   }
   ignoreDocketClose = true
   docketDialog.close()
   ignoreDocketClose = false
-  if (options?.replaceUrl !== false && docketIdFromSearch()) {
-    history.replaceState(history.state, '', appPath('none'))
-  }
+  if (options?.replaceUrl !== false) syncOverlayUrl('none')
 }
 
 function mountDocketDialog() {
@@ -345,9 +342,7 @@ function mountDocketDialog() {
     snapshotAbort?.abort()
     docketOverlay = { status: 'closed' }
     if (ignoreDocketClose) return
-    if (docketIdFromSearch()) {
-      history.replaceState(history.state, '', appPath('none'))
-    }
+    if (docketIdFromSearch()) syncOverlayUrl('none')
   })
   docketDialog.addEventListener('click', (event) => {
     if (!(event.target instanceof Element)) return
@@ -1055,9 +1050,7 @@ async function judge(raw: string) {
   lastInput = raw.trim()
   closeDocket({ replaceUrl: false })
   closeStamp({ replaceUrl: false })
-  if (docketIdFromSearch() || isStampSearch()) {
-    history.replaceState({ view: 'judge' }, '', appPath('none'))
-  }
+  syncOverlayUrl('none')
   abortController?.abort()
   abortController = new AbortController()
   const signal = abortController.signal
