@@ -2,15 +2,21 @@ import { describe, expect, it } from 'vitest'
 import {
   clamp01,
   overlaySearch,
+  clampStampCenter,
   clampStampScale,
+  DEFAULT_STAMP_PLACEMENT,
   fitContain,
   fitExportSize,
+  fitStampScale,
   imageFileError,
   isStampSearch,
   MAX_EXPORT_EDGE,
   MAX_IMAGE_BYTES,
   pointInRotatedRect,
   pointerToImage,
+  measureStamp,
+  stampOccupiedSize,
+  stampAabbSize,
   stampFilename,
   stampLabel,
   STAMP_SCALE_MAX,
@@ -98,5 +104,87 @@ describe('layout math', () => {
     expect(
       pointerToImage(25, 60, { left: 10, top: 10, width: 100, height: 50 } as DOMRect, 800, 400),
     ).toEqual({ x: 120, y: 400 })
+  })
+
+  it('computes the axis-aligned bounds of a rotated stamp', () => {
+    expect(stampAabbSize({ width: 100, height: 20, rotation: 0 })).toEqual({
+      width: 100,
+      height: 20,
+    })
+    const tilted = stampAabbSize({ width: 100, height: 20, rotation: Math.PI / 2 })
+    expect(tilted.width).toBeCloseTo(20)
+    expect(tilted.height).toBeCloseTo(100)
+  })
+
+  it('keeps the stamp center far enough from the photo edges', () => {
+    expect(clampStampCenter(0, 0.5, 80, 20, 400, 200)).toEqual({
+      nx: 80 / 2 / 400,
+      ny: 0.5,
+    })
+    expect(clampStampCenter(1, 1, 80, 20, 400, 200)).toEqual({
+      nx: 1 - 80 / 2 / 400,
+      ny: 1 - 20 / 2 / 200,
+    })
+    expect(clampStampCenter(0.1, 0.1, 500, 40, 400, 200)).toEqual({
+      nx: 0.5,
+      ny: 0.1,
+    })
+  })
+
+  it('shrinks the wider not-asshole stamp to fit a narrow photo', () => {
+    const ctx = {
+      font: '',
+      textAlign: 'center',
+      textBaseline: 'middle',
+      letterSpacing: '0px',
+      measureText(this: { font: string }, text: string) {
+        const size = Number(/(\d+(?:\.\d+)?)px/.exec(this.font)?.[1] ?? 16)
+        return { width: text.length * size * 1.05 }
+      },
+    } as CanvasRenderingContext2D
+    const imageWidth = 360
+    const imageHeight = 640
+    const placement = {
+      ...DEFAULT_STAMP_PLACEMENT,
+      verdict: 'NOT ASSHOLE' as const,
+    }
+    const unfitted = stampAabbSize(
+      measureStamp(ctx, { ...placement, scale: 1 }, imageWidth, imageHeight),
+    )
+    expect(unfitted.width).toBeGreaterThan(imageWidth)
+
+    const fittedScale = fitStampScale(ctx, placement, imageWidth, imageHeight)
+    const fitted = stampAabbSize(
+      measureStamp(
+        ctx,
+        { ...placement, scale: fittedScale },
+        imageWidth,
+        imageHeight,
+      ),
+    )
+    expect(fittedScale).toBeLessThan(1)
+    expect(fitted.width).toBeLessThanOrEqual(imageWidth)
+    expect(
+      stampOccupiedSize(
+        measureStamp(
+          ctx,
+          { ...placement, scale: fittedScale },
+          imageWidth,
+          imageHeight,
+        ),
+        { ...placement, scale: fittedScale },
+        imageWidth,
+        imageHeight,
+      ).width,
+    ).toBeLessThanOrEqual(imageWidth)
+    expect(fitted.width).toBeLessThan(imageWidth * 0.9)
+
+    const assholeScale = fitStampScale(
+      ctx,
+      { ...DEFAULT_STAMP_PLACEMENT, verdict: 'ASSHOLE' },
+      imageWidth,
+      imageHeight,
+    )
+    expect(assholeScale).toBeGreaterThan(fittedScale)
   })
 })
