@@ -8,6 +8,8 @@ import {
   shouldSuggestProfiles,
   storeProfileSearchCacheForTest,
   suggestionValue,
+  VERTEX_RELAY,
+  vertexHasKind0,
 } from './profile-search'
 
 const querySync = vi.fn()
@@ -152,6 +154,44 @@ describe('searchProfiles cache', () => {
     const results = await searchProfiles('jack')
     expect(results).toHaveLength(1)
     expect(results[0]?.displayName).toBe('Jack (new)')
+  })
+})
+
+describe('vertexHasKind0', () => {
+  afterEach(() => {
+    querySync.mockReset()
+  })
+
+  it('is true when Vertex returns a kind 0 for that pubkey', async () => {
+    querySync.mockResolvedValue([sampleEvent])
+
+    await expect(vertexHasKind0(sampleEvent.pubkey)).resolves.toBe(true)
+    expect(querySync).toHaveBeenCalledWith(
+      [VERTEX_RELAY],
+      {
+        kinds: [0],
+        authors: [sampleEvent.pubkey],
+        limit: 1,
+      },
+      expect.objectContaining({ maxWait: expect.any(Number) }),
+    )
+  })
+
+  it('is false when Vertex has no kind 0 for that pubkey', async () => {
+    querySync.mockResolvedValue([])
+    await expect(vertexHasKind0(sampleEvent.pubkey)).resolves.toBe(false)
+  })
+
+  it('is false when Vertex throws', async () => {
+    querySync.mockRejectedValue(new Error('relay down'))
+    await expect(vertexHasKind0(sampleEvent.pubkey)).resolves.toBe(false)
+  })
+
+  it('ignores kind 0 events for a different pubkey', async () => {
+    querySync.mockResolvedValue([sampleEvent])
+    const other =
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    await expect(vertexHasKind0(other)).resolves.toBe(false)
   })
 })
 
