@@ -3,7 +3,6 @@ import {
   CASE_ID_RE,
   DEFAULT_DOCKET_CLIENT_DAILY,
   DOCKET_LIST_LIMIT,
-  DOCKET_STORE_LIMIT,
   HEX_64,
   type DocketCase,
   type DocketCaseInput,
@@ -98,43 +97,14 @@ export async function appendDocketCase(
     judgedAt: new Date().toISOString(),
   }
 
-  const dropped = await redis.pipeline()
+  await redis.pipeline()
     .set(caseKey(id), snapshot)
     .lrem(IDS_KEY, 0, id)
     .lpush(IDS_KEY, id)
-    .lrange(IDS_KEY, DOCKET_STORE_LIMIT, -1)
-    .ltrim(IDS_KEY, 0, DOCKET_STORE_LIMIT - 1)
     .set(pointerKey, id)
     .exec()
 
-  const overflow = dropped[3]
-  if (Array.isArray(overflow) && overflow.length > 0) {
-    const stale = overflow.filter(
-      (value): value is string =>
-        typeof value === 'string' && CASE_ID_RE.test(value) && value !== id,
-    )
-    if (stale.length > 0) {
-      await deleteDroppedCases(redis, stale)
-    }
-  }
-
   return { snapshot, replaced }
-}
-
-async function deleteDroppedCases(
-  redis: Redis,
-  ids: string[],
-): Promise<void> {
-  const blobs = await redis.mget<DocketCase>(...ids.map(caseKey))
-  const keys = ids.map(caseKey)
-  for (const blob of blobs) {
-    if (!blob || typeof blob !== 'object' || typeof blob.pubkey !== 'string') {
-      continue
-    }
-    const pointer = await redis.get<string>(pubkeyKey(blob.pubkey))
-    if (pointer === blob.id) keys.push(pubkeyKey(blob.pubkey))
-  }
-  await redis.del(...keys)
 }
 
 export async function listDocketCases(redis: Redis): Promise<DocketCase[]> {
