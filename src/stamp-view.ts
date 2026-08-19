@@ -50,8 +50,10 @@ let lastBox: StampBox | undefined
 let stageObserver: ResizeObserver | undefined
 let isStampViewActive = () => false
 let windowListenersBound = false
+let sessionGeneration = 0
 
 export function resetStampSession() {
+  sessionGeneration += 1
   if (session.objectUrl) URL.revokeObjectURL(session.objectUrl)
   session.image = null
   session.objectUrl = null
@@ -406,12 +408,18 @@ async function adoptFile(file: File) {
     refreshStampDom()
     return
   }
+  const generation = sessionGeneration
   const objectUrl = URL.createObjectURL(file)
   try {
     const image = await loadHtmlImage(objectUrl)
+    if (generation !== sessionGeneration) {
+      URL.revokeObjectURL(objectUrl)
+      return
+    }
     adoptImage(image, objectUrl)
   } catch {
     URL.revokeObjectURL(objectUrl)
+    if (generation !== sessionGeneration) return
     session.error = 'That file is not an image we can stamp.'
     refreshStampDom()
   }
