@@ -5,6 +5,7 @@
  *
  *   node .cursor/skills/docket/scripts/docket.mjs list [--json]
  *   node .cursor/skills/docket/scripts/docket.mjs size [--json]
+ *   node .cursor/skills/docket/scripts/docket.mjs usage [--json]
  *   node .cursor/skills/docket/scripts/docket.mjs get <id> [--json]
  *   node .cursor/skills/docket/scripts/docket.mjs delete <id> [id...]
  *   node .cursor/skills/docket/scripts/docket.mjs clear --yes
@@ -26,6 +27,10 @@ const HEX_64 = /^[0-9a-f]{64}$/i
 const LIST_LIMIT = 8
 /** Soft flag for a fat homepage list. Not an error. */
 const LIST_BYTES_WARN = 150_000
+/** Upstash Redis free-tier data cap. */
+const FREE_TIER_BYTES = 256 * 1024 * 1024
+const USAGE_WARN_RATIO = 0.5
+const USAGE_HIGH_RATIO = 0.8
 
 function loadLocalEnv() {
   for (const file of ['.env.local', '.env']) {
@@ -87,6 +92,7 @@ function usage() {
   console.log(`Usage:
   node .cursor/skills/docket/scripts/docket.mjs list [--json]
   node .cursor/skills/docket/scripts/docket.mjs size [--json]
+  node .cursor/skills/docket/scripts/docket.mjs usage [--json]
   node .cursor/skills/docket/scripts/docket.mjs get <id> [--json]
   node .cursor/skills/docket/scripts/docket.mjs delete <id> [id...]
   node .cursor/skills/docket/scripts/docket.mjs clear --yes
@@ -208,7 +214,30 @@ function noteChars(snapshot) {
 
 function formatBytes(n) {
   if (n < 1024) return `${n} bytes`
-  return `${n} bytes (${(n / 1024).toFixed(1)} KB)`
+  if (n < 1024 * 1024) return `${n} bytes (${(n / 1024).toFixed(1)} KB)`
+  return `${n} bytes (${(n / (1024 * 1024)).toFixed(2)} MB)`
+}
+
+function parseUsedMemory(raw) {
+  if (typeof raw === 'string') {
+    const match = raw.match(/used_memory:(\d+)/)
+    if (match) return Number(match[1])
+    return null
+  }
+  if (raw && typeof raw === 'object') {
+    const value = raw.used_memory ?? raw.usedMemory
+    const n = Number(value)
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
+async function readUsedMemory(redis) {
+  try {
+    return parseUsedMemory(await redis.info('memory'))
+  } catch {
+    return null
+  }
 }
 
 async function loadFeed(redis) {
@@ -291,6 +320,61 @@ async function cmdSize(redis, json) {
   if (report.overWarn) {
     console.log(
       `Feed is over ${formatBytes(LIST_BYTES_WARN)}. Homepage may feel slower; consider dropping notes from the list again.`,
+    )
+  }
+}
+
+function usageLevel(bytes) {
+  const ratio = bytes / FREE_TIER_BYTES
+  if (ratio >= USAGE_HIGH_RATIO) return 'high'
+  if (ratio >= USAGE_WARN_RATIO) return 'warn'
+  return 'ok'
+}
+
+async function cmdUsage(redis, json) {
+  const ids = await redis.lrange(IDS_KEY, 0, -1)
+  const rows = await loadCases(redis, ids)
+  let snapshotBytes = 0
+  let missing = 0
+  for (const { snapshot } of rows) {
+    if (!snapshot || typeof snapshot !== 'object') {
+      missing += 1
+      continue
+    }
+    snapshotBytes += JSON.stringify(snapshot).length
+  }
+  const redisBytes = await readUsedMemory(redis)
+  const measured = redisBytes ?? snapshotBytes
+  const report = {
+    cases: ids.length,
+    missing,
+    snapshotBytes,
+    redisBytes,
+    freeTierBytes: FREE_TIER_BYTES,
+    usedRatio: measured / FREE_TIER_BYTES,
+    level: usageLevel(measured),
+  }
+
+  if (json) {
+    console.log(JSON.stringify(report, null, 2))
+    return
+  }
+  console.log(`stored cases\t${report.cases}`)
+  if (missing > 0) console.log(`missing snapshots\t${missing}`)
+  console.log(`snapshot JSON\t${formatBytes(snapshotBytes)}`)
+  if (redisBytes != null) {
+    console.log(`Redis used_memory\t${formatBytes(redisBytes)}`)
+  }
+  console.log(
+    `free tier\t${formatBytes(FREE_TIER_BYTES)}\t${(report.usedRatio * 100).toFixed(1)}%`,
+  )
+  if (report.level === 'high') {
+    console.log(
+      'Storage is over 80% of the 256 MB free cap. Trim old cases or move off the free tier.',
+    )
+  } else if (report.level === 'warn') {
+    console.log(
+      'Storage is over 50% of the 256 MB free cap. Check again if the docket keeps growing.',
     )
   }
 }
@@ -467,6 +551,9 @@ switch (command) {
     break
   case 'size':
     await cmdSize(redis, json)
+    break
+  case 'usage':
+    await cmdUsage(redis, json)
     break
   case 'get':
     if (!args[0]) fail('get requires a case id')
