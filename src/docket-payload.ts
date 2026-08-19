@@ -1,6 +1,5 @@
 /** Shared docket snapshot shapes and POST-body validation (client + API). */
 
-export const DOCKET_STORE_LIMIT = 50
 export const DOCKET_LIST_LIMIT = 8
 export const MAX_DOCKET_BODY_BYTES = 80_000
 export const MAX_REASON_CHARS = 2_000

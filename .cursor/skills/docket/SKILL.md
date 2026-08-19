@@ -5,7 +5,7 @@ description: List, delete, and ban AssholeNet public docket cases. Measure homep
 
 # Docket admin
 
-Manage the rolling public docket in Redis. Bans live in the `docket:excluded` set (hex pubkeys) and take effect immediately — no Vercel env var or redeploy. There is no HTTP delete/ban API — use the CLI from the **repo root**.
+Manage the public docket in Redis. Snapshots are kept so shared `/docket/:id` links keep working; the homepage still shows the newest 8. Bans live in the `docket:excluded` set (hex pubkeys) and take effect immediately — no Vercel env var or redeploy. There is no HTTP delete/ban API — use the CLI from the **repo root**.
 
 ```bash
 node .cursor/skills/docket/scripts/docket.mjs list [--json]
