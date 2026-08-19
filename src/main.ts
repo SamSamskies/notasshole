@@ -50,6 +50,7 @@ import {
   type DocketCard,
   type DocketCase,
 } from './docket'
+import { DOCKET_LIST_LIMIT } from './docket-payload'
 import { isStampSearch } from './stamp'
 import {
   attachStampWindowListeners,
@@ -112,7 +113,7 @@ function rememberDocketCase(snapshot: DocketCase) {
   const rest = (docketList ?? []).filter(
     (item) => item.id !== snapshot.id && item.pubkey !== snapshot.pubkey,
   )
-  docketList = [snapshot, ...rest]
+  docketList = [snapshot, ...rest].slice(0, DOCKET_LIST_LIMIT)
 }
 
 function renderDocket(cards: DocketCard[] | undefined): HTMLElement | undefined {
