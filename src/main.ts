@@ -107,7 +107,6 @@ let comboboxCleanup: (() => void) | undefined
 let lastInput = ''
 let docketList: DocketCase[] | undefined
 let docketRefresh: Promise<void> | undefined
-let resultBeforeStamp: Extract<AppState, { view: 'result' }> | undefined
 
 function rememberDocketCase(snapshot: DocketCase) {
   const rest = (docketList ?? []).filter(
@@ -247,9 +246,13 @@ function appPath(opts?: { docket?: string; stamp?: boolean }): string {
   return query ? `${url.pathname}?${query}` : url.pathname
 }
 
-function goIdle() {
+function cancelInFlight() {
   abortController?.abort()
   stopLoadingCycle()
+}
+
+function goIdle() {
+  cancelInFlight()
   if (docketIdFromSearch() || isStampSearch()) {
     history.pushState({ view: 'idle' }, '', appPath())
   }
@@ -257,13 +260,11 @@ function goIdle() {
 }
 
 function goStamp() {
-  abortController?.abort()
-  stopLoadingCycle()
+  cancelInFlight()
   if (!isStampSearch() || docketIdFromSearch()) {
     history.pushState({ view: 'stamp' }, '', appPath({ stamp: true }))
   }
   if (state.view === 'stamp') return
-  resultBeforeStamp = state.view === 'result' ? state : undefined
   setState({ view: 'stamp' })
 }
 
@@ -347,6 +348,9 @@ function displayModelName(model: string | undefined): string {
 
 function setState(next: AppState) {
   if (state.view === 'stamp' && next.view !== 'stamp') resetStampSession()
+  if (state.view === 'consent' && next.view !== 'consent') {
+    state.resolve(false)
+  }
   state = next
   render()
 }
@@ -385,10 +389,13 @@ function startLoadingCycle(messages: string[]) {
 
 function askGeminiConsent(): Promise<boolean> {
   return new Promise((resolve) => {
+    let settled = false
     stopLoadingCycle()
     setState({
       view: 'consent',
       resolve: (ok) => {
+        if (settled) return
+        settled = true
         setGeminiConsent(ok)
         if (ok) startLoadingCycle(INFERENCE_LOADING_MESSAGES)
         resolve(ok)
@@ -1136,34 +1143,22 @@ async function judge(raw: string) {
   }
 }
 
-window.addEventListener('popstate', () => {
+function applyLocation() {
   const id = docketIdFromSearch()
   if (id) {
-    resultBeforeStamp = undefined
     void openSnapshot(id)
     return
   }
   if (isStampSearch()) {
-    abortController?.abort()
-    stopLoadingCycle()
-    setState({ view: 'stamp' })
+    cancelInFlight()
+    if (state.view !== 'stamp') setState({ view: 'stamp' })
     return
   }
-  if (state.view === 'stamp' && resultBeforeStamp) {
-    const restored = resultBeforeStamp
-    resultBeforeStamp = undefined
-    abortController?.abort()
-    stopLoadingCycle()
-    setState(restored)
-    return
-  }
-  resultBeforeStamp = undefined
-  if (state.view !== 'idle') {
-    abortController?.abort()
-    stopLoadingCycle()
-    setState({ view: 'idle' })
-  }
-})
+  cancelInFlight()
+  if (state.view !== 'idle') setState({ view: 'idle' })
+}
+
+window.addEventListener('popstate', applyLocation)
 
 function syncStampFooter() {
   const link = document.querySelector<HTMLAnchorElement>('.footer-stamp')
