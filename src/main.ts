@@ -52,14 +52,11 @@ import {
   type DocketCase,
 } from './docket'
 import { DOCKET_LIST_LIMIT } from './docket-payload'
-import { isStampSearch } from './stamp'
+import { isStampSearch, overlaySearch } from './stamp'
 import {
   attachStampWindowListeners,
-  renderStampActions,
-  renderStampPanel,
-  resetStampSession,
-  STAMP_DISCLAIMER,
-  STAMP_TAGLINE,
+  mountStampOverlay,
+  setStampOverlayOpen,
 } from './stamp-view'
 
 const FETCH_LOADING_MESSAGES = [
@@ -78,7 +75,6 @@ const INFERENCE_LOADING_MESSAGES = [
 
 type AppState =
   | { view: 'idle' }
-  | { view: 'stamp' }
   | { view: 'loading'; message: string }
   | {
       view: 'consent'
@@ -109,6 +105,16 @@ let comboboxCleanup: (() => void) | undefined
 let lastInput = ''
 let docketList: DocketCase[] | undefined
 let docketRefresh: Promise<void> | undefined
+let docketOverlay: DocketOverlay = { status: 'closed' }
+let docketDialog: HTMLDialogElement | undefined
+let snapshotAbort: AbortController | undefined
+let ignoreDocketClose = false
+
+type DocketOverlay =
+  | { status: 'closed' }
+  | { status: 'loading'; id: string }
+  | { status: 'missing'; id: string }
+  | { status: 'ready'; snapshot: DocketCase; showNotes: boolean }
 
 function rememberDocketCase(snapshot: DocketCase) {
   const rest = (docketList ?? []).filter(
@@ -238,14 +244,8 @@ function refreshDocket() {
   return docketRefresh
 }
 
-function appPath(opts?: { docket?: string; stamp?: boolean }): string {
-  const url = new URL(location.href)
-  url.searchParams.delete('docket')
-  url.searchParams.delete('stamp')
-  if (opts?.docket) url.searchParams.set('docket', opts.docket)
-  if (opts?.stamp) url.searchParams.set('stamp', '1')
-  const query = url.searchParams.toString()
-  return query ? `${url.pathname}?${query}` : url.pathname
+function appPath(overlay: 'none' | 'stamp' | { docket: string }): string {
+  return overlaySearch(location.href, overlay)
 }
 
 function cancelInFlight() {
@@ -255,56 +255,48 @@ function cancelInFlight() {
 
 function goIdle() {
   cancelInFlight()
+  closeStamp({ replaceUrl: true })
+  closeDocket({ replaceUrl: true })
   if (docketIdFromSearch() || isStampSearch()) {
-    history.pushState({ view: 'idle' }, '', appPath())
+    history.pushState({ view: 'idle' }, '', appPath('none'))
   }
   setState({ view: 'idle' })
 }
 
-function goStamp() {
-  cancelInFlight()
-  if (!isStampSearch() || docketIdFromSearch()) {
-    history.pushState({ view: 'stamp' }, '', appPath({ stamp: true }))
+function openStamp() {
+  closeDocket({ replaceUrl: false })
+  if (!isStampSearch()) {
+    history.pushState({ view: 'stamp' }, '', appPath('stamp'))
   }
-  if (state.view === 'stamp') return
-  setState({ view: 'stamp' })
+  setStampOverlayOpen(true)
+}
+
+function closeStamp(options?: { replaceUrl?: boolean }) {
+  setStampOverlayOpen(false)
+  if (options?.replaceUrl !== false && isStampSearch()) {
+    history.replaceState(history.state, '', appPath('none'))
+  }
 }
 
 function applySnapshot(snapshot: DocketCase) {
-  stopLoadingCycle()
-  setState({
-    view: 'result',
-    verdict: {
-      verdict: snapshot.verdict,
-      confidence: snapshot.confidence,
-      reason: snapshot.reason,
-      model: snapshot.model,
-    },
-    notes: notesFromSnapshot(snapshot.notes),
-    profile: {
-      displayName: snapshot.displayName,
-      picture: snapshot.picture,
-    },
-    showNotes: false,
-    snapshot: {
-      id: snapshot.id,
-      judgedAt: snapshot.judgedAt,
-      pubkey: snapshot.pubkey,
-    },
-  })
+  docketOverlay = { status: 'ready', snapshot, showNotes: false }
+  syncDocketDialog()
 }
 
-async function openSnapshot(
-  id: string,
-  options?: { pushUrl?: boolean },
-) {
+async function openSnapshot(id: string, options?: { pushUrl?: boolean }) {
+  closeStamp({ replaceUrl: false })
+  if (state.view !== 'idle') {
+    cancelInFlight()
+    setState({ view: 'idle' })
+  }
+
   if (options?.pushUrl) {
     history.pushState({ view: 'snapshot', id }, '', appPath({ docket: id }))
   }
 
-  abortController?.abort()
-  abortController = new AbortController()
-  const signal = abortController.signal
+  snapshotAbort?.abort()
+  snapshotAbort = new AbortController()
+  const signal = snapshotAbort.signal
 
   const cached = cachedDocketCase(docketList, id)
   if (cached) {
@@ -312,24 +304,154 @@ async function openSnapshot(
     return
   }
 
-  startLoadingCycle(['PULLING THE FILE...', 'OPENING THE DOCKET...'])
+  docketOverlay = { status: 'loading', id }
+  syncDocketDialog()
 
   const snapshot = await fetchDocketCase(id)
-  if (!isActiveJudge(signal)) return
-  stopLoadingCycle()
+  if (signal.aborted) return
 
   if (!snapshot) {
-    setState({
-      view: 'error',
-      title: 'FILE NOT FOUND',
-      detail:
-        'That docket entry is gone. Judgements fall off this public list after a while.',
-      retryable: false,
-    })
+    docketOverlay = { status: 'missing', id }
+    syncDocketDialog()
     return
   }
 
   applySnapshot(snapshot)
+}
+
+function closeDocket(options?: { replaceUrl?: boolean }) {
+  snapshotAbort?.abort()
+  docketOverlay = { status: 'closed' }
+  if (!docketDialog?.open) {
+    if (options?.replaceUrl !== false && docketIdFromSearch()) {
+      history.replaceState(history.state, '', appPath('none'))
+    }
+    return
+  }
+  ignoreDocketClose = true
+  docketDialog.close()
+  ignoreDocketClose = false
+  if (options?.replaceUrl !== false && docketIdFromSearch()) {
+    history.replaceState(history.state, '', appPath('none'))
+  }
+}
+
+function mountDocketDialog() {
+  if (docketDialog) return
+  docketDialog = document.createElement('dialog')
+  docketDialog.className = 'docket-dialog'
+  docketDialog.setAttribute('aria-labelledby', 'docket-dialog-title')
+  docketDialog.addEventListener('close', () => {
+    snapshotAbort?.abort()
+    docketOverlay = { status: 'closed' }
+    if (ignoreDocketClose) return
+    if (docketIdFromSearch()) {
+      history.replaceState(history.state, '', appPath('none'))
+    }
+  })
+  docketDialog.addEventListener('click', (event) => {
+    if (!(event.target instanceof Element)) return
+    const rect = docketDialog?.getBoundingClientRect()
+    if (!rect) return
+    if (
+      event.clientX < rect.left ||
+      event.clientX > rect.right ||
+      event.clientY < rect.top ||
+      event.clientY > rect.bottom
+    ) {
+      docketDialog?.close()
+    }
+  })
+  document.body.append(docketDialog)
+}
+
+function syncDocketDialog() {
+  if (!docketDialog) return
+  if (docketOverlay.status === 'closed') {
+    if (docketDialog.open) {
+      ignoreDocketClose = true
+      docketDialog.close()
+      ignoreDocketClose = false
+    }
+    docketDialog.replaceChildren()
+    return
+  }
+
+  docketDialog.replaceChildren(renderDocketDialogBody())
+  if (!docketDialog.open) docketDialog.showModal()
+}
+
+function renderDocketDialogBody(): HTMLElement {
+  const wrap = document.createElement('div')
+  wrap.className = 'docket-dialog-sheet'
+
+  const chrome = document.createElement('div')
+  chrome.className = 'docket-dialog-chrome'
+
+  const kicker = document.createElement('p')
+  kicker.className = 'docket-dialog-kicker'
+  kicker.id = 'docket-dialog-title'
+  kicker.textContent = 'Case file'
+
+  const close = document.createElement('button')
+  close.type = 'button'
+  close.className = 'docket-dialog-close'
+  close.setAttribute('aria-label', 'Close case file')
+  close.title = 'Close'
+  close.textContent = '×'
+  close.addEventListener('click', () => docketDialog?.close())
+
+  chrome.append(kicker, close)
+  wrap.append(chrome)
+
+  if (docketOverlay.status === 'loading') {
+    const status = document.createElement('p')
+    status.className = 'docket-dialog-status'
+    status.textContent = 'Opening the file…'
+    wrap.append(status)
+    return wrap
+  }
+
+  if (docketOverlay.status !== 'ready') {
+    const status = document.createElement('p')
+    status.className = 'docket-dialog-status'
+    status.textContent =
+      docketOverlay.status === 'missing'
+        ? 'That docket entry is gone. Judgements fall off this public list after a while.'
+        : 'Opening the file…'
+    wrap.append(status)
+    return wrap
+  }
+
+  const { snapshot, showNotes } = docketOverlay
+  const built = buildResult(
+    {
+      verdict: snapshot.verdict,
+      confidence: snapshot.confidence,
+      reason: snapshot.reason,
+      model: snapshot.model,
+    },
+    notesFromSnapshot(snapshot.notes),
+    {
+      displayName: snapshot.displayName,
+      picture: snapshot.picture,
+    },
+    showNotes,
+    {
+      id: snapshot.id,
+      judgedAt: snapshot.judgedAt,
+      pubkey: snapshot.pubkey,
+    },
+  )
+  built.toggle.className = 'primary'
+  built.toggle.addEventListener('click', () => {
+    if (docketOverlay.status !== 'ready') return
+    docketOverlay = { ...docketOverlay, showNotes: !docketOverlay.showNotes }
+    syncDocketDialog()
+  })
+  built.again.remove()
+  wrap.append(built.panel, built.actions)
+  return wrap
 }
 
 function shuffleMessages(messages: string[]): string[] {
@@ -349,7 +471,6 @@ function displayModelName(model: string | undefined): string {
 }
 
 function setState(next: AppState) {
-  if (state.view === 'stamp' && next.view !== 'stamp') resetStampSession()
   if (state.view === 'consent' && next.view !== 'consent') {
     state.resolve(false)
   }
@@ -427,7 +548,6 @@ function renderShell(
     disclaimer?: boolean
     disclaimerText?: string
     tagline?: string
-    brandHome?: boolean
   },
 ) {
   app.replaceChildren()
@@ -438,16 +558,9 @@ function renderShell(
   const header = document.createElement('header')
   header.className = 'hero'
 
-  const brand = options?.brandHome
-    ? document.createElement('button')
-    : document.createElement('p')
+  const brand = document.createElement('p')
   brand.className = 'brand'
   brand.textContent = 'ASSHOLE DETECTOR'
-  if (brand instanceof HTMLButtonElement) {
-    brand.type = 'button'
-    brand.title = 'Back to the detector'
-    brand.addEventListener('click', () => goIdle())
-  }
 
   const tagline = document.createElement('p')
   tagline.className = 'tagline'
@@ -728,6 +841,25 @@ function renderResult(
     pubkey: string
   },
 ) {
+  const built = buildResult(verdict, notes, profile, showNotes, snapshot)
+  built.toggle.addEventListener('click', () => {
+    if (state.view !== 'result') return
+    setState({ ...state, showNotes: !state.showNotes })
+  })
+  renderShell(built.panel, { after: built.actions, disclaimer: false })
+}
+
+function buildResult(
+  verdict: Verdict,
+  notes: LocatedEvent[],
+  profile: ProfileInfo,
+  showNotes: boolean,
+  snapshot?: {
+    id: string
+    judgedAt: string
+    pubkey: string
+  },
+) {
   const panel = document.createElement('section')
   panel.className = 'panel result-panel'
 
@@ -803,10 +935,6 @@ function renderResult(
   toggle.type = 'button'
   toggle.className = 'secondary'
   toggle.textContent = showNotes ? 'HIDE NOTES' : 'VIEW NOTES'
-  toggle.addEventListener('click', () => {
-    if (state.view !== 'result') return
-    setState({ ...state, showNotes: !state.showNotes })
-  })
 
   const again = document.createElement('button')
   again.type = 'button'
@@ -852,7 +980,7 @@ function renderResult(
     panel.append(list)
   }
 
-  renderShell(panel, { after: actions, disclaimer: false })
+  return { panel, actions, toggle, again }
 }
 
 function render() {
@@ -866,16 +994,10 @@ function render() {
   switch (state.view) {
     case 'idle':
       renderShell(renderForm(), { after: renderDocket(docketList) })
-      document.querySelector<HTMLInputElement>('#identity')?.focus()
+      if (!docketIdFromSearch() && !isStampSearch()) {
+        document.querySelector<HTMLInputElement>('#identity')?.focus()
+      }
       void refreshDocket()
-      break
-    case 'stamp':
-      renderShell(renderStampPanel(), {
-        after: renderStampActions(),
-        tagline: STAMP_TAGLINE,
-        brandHome: true,
-        disclaimerText: STAMP_DISCLAIMER,
-      })
       break
     case 'loading':
       renderLoading(state.message)
@@ -901,8 +1023,6 @@ function render() {
       )
       break
   }
-
-  syncStampFooter()
 }
 
 function isActiveJudge(signal: AbortSignal): boolean {
@@ -933,8 +1053,10 @@ async function resolveSubmittedIdentity(
 
 async function judge(raw: string) {
   lastInput = raw.trim()
-  if (docketIdFromSearch()) {
-    history.replaceState({ view: 'judge' }, '', appPath())
+  closeDocket({ replaceUrl: false })
+  closeStamp({ replaceUrl: false })
+  if (docketIdFromSearch() || isStampSearch()) {
+    history.replaceState({ view: 'judge' }, '', appPath('none'))
   }
   abortController?.abort()
   abortController = new AbortController()
@@ -1155,39 +1277,27 @@ function applyLocation() {
     void openSnapshot(id)
     return
   }
+  closeDocket({ replaceUrl: false })
   if (isStampSearch()) {
-    cancelInFlight()
-    if (state.view !== 'stamp') setState({ view: 'stamp' })
+    setStampOverlayOpen(true)
     return
   }
-  cancelInFlight()
-  if (state.view !== 'idle') setState({ view: 'idle' })
+  closeStamp({ replaceUrl: false })
 }
 
 window.addEventListener('popstate', applyLocation)
 
-function syncStampFooter() {
-  const link = document.querySelector<HTMLAnchorElement>('.footer-stamp')
-  if (!link) return
-  link.setAttribute('aria-current', state.view === 'stamp' ? 'page' : 'false')
-}
-
-document.querySelector('.footer-stamp')?.addEventListener('click', (event) => {
-  if (!(event instanceof MouseEvent)) return
-  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-  if (event.button !== 0) return
-  event.preventDefault()
-  goStamp()
+mountStampOverlay({
+  onRequestOpen: openStamp,
+  onDismiss: () => closeStamp({ replaceUrl: true }),
 })
-
-attachStampWindowListeners(() => state.view === 'stamp')
+mountDocketDialog()
+attachStampWindowListeners()
 
 const bootId = docketIdFromSearch()
+render()
 if (bootId) {
   void openSnapshot(bootId)
 } else if (isStampSearch()) {
-  setState({ view: 'stamp' })
-} else {
-  render()
+  setStampOverlayOpen(true)
 }
-syncStampFooter()

@@ -21,7 +21,6 @@ import {
   type StampVerdict,
 } from './stamp'
 
-export const STAMP_TAGLINE = 'Rubber stamps. No AI, no relays.'
 export const STAMP_DISCLAIMER =
   'Stays in your browser. We never see the photo. Not a legal ruling.'
 
@@ -48,9 +47,12 @@ type DragState = {
 let drag: DragState | undefined
 let lastBox: StampBox | undefined
 let stageObserver: ResizeObserver | undefined
-let isStampViewActive = () => false
 let windowListenersBound = false
 let sessionGeneration = 0
+let stampDialog: HTMLDialogElement | undefined
+let stampLauncher: HTMLButtonElement | undefined
+let ignoreStampClose = false
+let stampHandlers: { onRequestOpen: () => void; onDismiss: () => void } | undefined
 
 export function resetStampSession() {
   sessionGeneration += 1
@@ -65,17 +67,151 @@ export function resetStampSession() {
   stageObserver = undefined
 }
 
-export function attachStampWindowListeners(isActive: () => boolean) {
-  isStampViewActive = isActive
+export function attachStampWindowListeners() {
   if (windowListenersBound) return
   windowListenersBound = true
   window.addEventListener('resize', () => {
-    if (isStampViewActive()) drawPreview()
+    if (stampDialog?.open) drawPreview()
   })
   window.addEventListener('paste', (event) => {
-    if (!isStampViewActive()) return
+    if (!stampDialog?.open) return
     void handlePaste(event)
   })
+}
+
+export function mountStampOverlay(handlers: {
+  onRequestOpen: () => void
+  onDismiss: () => void
+}) {
+  stampHandlers = handlers
+  if (stampLauncher && stampDialog) return
+
+  stampLauncher = document.createElement('button')
+  stampLauncher.type = 'button'
+  stampLauncher.className = 'stamp-launcher'
+  stampLauncher.setAttribute('aria-label', 'Stamp a photo')
+  stampLauncher.setAttribute('aria-haspopup', 'dialog')
+  stampLauncher.setAttribute('aria-expanded', 'false')
+  stampLauncher.setAttribute('aria-controls', 'stamp-drawer')
+  stampLauncher.title = 'Stamp a photo'
+  stampLauncher.append(createStampLauncherIcon())
+  stampLauncher.addEventListener('click', () => {
+    if (stampDialog?.open) stampDialog.close()
+    else stampHandlers?.onRequestOpen()
+  })
+
+  stampDialog = document.createElement('dialog')
+  stampDialog.id = 'stamp-drawer'
+  stampDialog.className = 'stamp-overlay'
+  stampDialog.setAttribute('aria-labelledby', 'stamp-drawer-title')
+  stampDialog.addEventListener('close', () => {
+    stampLauncher?.setAttribute('aria-expanded', 'false')
+    if (ignoreStampClose) return
+    stampHandlers?.onDismiss()
+  })
+  stampDialog.addEventListener('click', (event) => {
+    if (event.target === stampDialog) stampDialog.close()
+  })
+
+  const sheet = document.createElement('div')
+  sheet.className = 'stamp-sheet'
+
+  const chrome = document.createElement('div')
+  chrome.className = 'stamp-drawer-chrome'
+
+  const close = document.createElement('button')
+  close.type = 'button'
+  close.className = 'stamp-drawer-close'
+  close.setAttribute('aria-label', 'Close stamp')
+  close.title = 'Close'
+  close.append(createCloseIcon())
+  close.addEventListener('click', () => stampDialog?.close())
+
+  chrome.append(close)
+  sheet.append(chrome, renderStampPanel(), renderStampActions())
+
+  const disclaimer = document.createElement('p')
+  disclaimer.className = 'disclaimer stamp-drawer-disclaimer'
+  disclaimer.textContent = STAMP_DISCLAIMER
+  sheet.append(disclaimer)
+
+  stampDialog.append(sheet)
+  document.body.append(stampLauncher, stampDialog)
+}
+
+export function setStampOverlayOpen(open: boolean) {
+  if (!stampDialog || !stampLauncher) return
+  stampLauncher.setAttribute('aria-expanded', open ? 'true' : 'false')
+  if (open) {
+    if (!stampDialog.open) stampDialog.showModal()
+    queueMicrotask(() => drawPreview())
+    stampDialog
+      .querySelector<HTMLButtonElement>('.stamp-drawer-close')
+      ?.focus()
+    return
+  }
+  if (!stampDialog.open) return
+  ignoreStampClose = true
+  stampDialog.close()
+  ignoreStampClose = false
+}
+
+function createStampLauncherIcon(): SVGSVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('aria-hidden', 'true')
+  svg.setAttribute('class', 'stamp-launcher-icon')
+
+  const handle = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  handle.setAttribute(
+    'd',
+    'M10 2.5h4c.6 0 1 .4 1 1V5h-6V3.5c0-.6.4-1 1-1Z',
+  )
+  handle.setAttribute('fill', 'currentColor')
+
+  const neck = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  neck.setAttribute('d', 'M9 5h6l1.2 3.2H7.8L9 5Z')
+  neck.setAttribute('fill', 'currentColor')
+
+  const pad = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+  pad.setAttribute('x', '5')
+  pad.setAttribute('y', '8.5')
+  pad.setAttribute('width', '14')
+  pad.setAttribute('height', '5.5')
+  pad.setAttribute('rx', '1.2')
+  pad.setAttribute('fill', 'currentColor')
+
+  const ink1 = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  ink1.setAttribute('d', 'M6.5 17.2h11')
+  ink1.setAttribute('fill', 'none')
+  ink1.setAttribute('stroke', 'currentColor')
+  ink1.setAttribute('stroke-width', '1.6')
+  ink1.setAttribute('stroke-linecap', 'round')
+
+  const ink2 = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  ink2.setAttribute('d', 'M8 20.2h8')
+  ink2.setAttribute('fill', 'none')
+  ink2.setAttribute('stroke', 'currentColor')
+  ink2.setAttribute('stroke-width', '1.6')
+  ink2.setAttribute('stroke-linecap', 'round')
+  ink2.setAttribute('opacity', '0.55')
+
+  svg.append(handle, neck, pad, ink1, ink2)
+  return svg
+}
+
+function createCloseIcon(): SVGSVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('aria-hidden', 'true')
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute(
+    'd',
+    'M6.3 6.3a1 1 0 0 1 1.4 0L12 10.6l4.3-4.3a1 1 0 1 1 1.4 1.4L13.4 12l4.3 4.3a1 1 0 1 1-1.4 1.4L12 13.4l-4.3 4.3a1 1 0 0 1-1.4-1.4L10.6 12 6.3 7.7a1 1 0 0 1 0-1.4Z',
+  )
+  path.setAttribute('fill', 'currentColor')
+  svg.append(path)
+  return svg
 }
 
 export function renderStampPanel(): HTMLElement {
@@ -87,9 +223,10 @@ export function renderStampPanel(): HTMLElement {
 
   const kicker = document.createElement('p')
   kicker.className = 'stamp-kicker'
-  kicker.textContent = 'Field kit'
+  kicker.textContent = 'No AI, no relays'
 
   const title = document.createElement('h2')
+  title.id = 'stamp-drawer-title'
   title.className = 'stamp-title'
   title.textContent = 'Official stamp'
 
@@ -103,7 +240,7 @@ export function renderStampPanel(): HTMLElement {
   bindPanelDrop(panel)
   queueMicrotask(() => drawPreview())
   void document.fonts.ready.then(() => {
-    if (isStampViewActive()) drawPreview()
+    if (stampDialog?.open) drawPreview()
   })
   return panel
 }
@@ -491,7 +628,7 @@ function drawPreview() {
   const stage = canvas?.parentElement
   if (!canvas || !stage || !session.image || stage.clientWidth <= 0) return
 
-  const maxH = Math.min(window.innerHeight * 0.55, 540)
+  const maxH = Math.min(window.innerHeight * 0.42, 420)
   const fitted = fitContain(
     session.image.naturalWidth,
     session.image.naturalHeight,

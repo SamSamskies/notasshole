@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   clamp01,
+  overlaySearch,
   clampStampScale,
   fitContain,
   fitExportSize,
@@ -23,6 +24,14 @@ describe('isStampSearch', () => {
     expect(isStampSearch('?stamp=&docket=nope')).toBe(true)
     expect(isStampSearch('?docket=111')).toBe(false)
     expect(isStampSearch('')).toBe(false)
+  })
+})
+
+describe('overlaySearch', () => {
+  it('keeps stamp and docket exclusive', () => {
+    expect(overlaySearch('/?docket=abc', 'stamp')).toBe('/?stamp=1')
+    expect(overlaySearch('/?stamp=1', { docket: 'abc' })).toBe('/?docket=abc')
+    expect(overlaySearch('/?docket=abc&stamp=1', 'none')).toBe('/')
   })
 })
 

@@ -42,6 +42,35 @@ export function isStampSearch(search = location.search): boolean {
   return new URLSearchParams(search).has('stamp')
 }
 
+export function applyAppSearch(
+  href: string,
+  updates: { docket?: string | null; stamp?: boolean },
+): string {
+  const url = new URL(href, 'http://local.invalid')
+  if ('docket' in updates) {
+    if (updates.docket) url.searchParams.set('docket', updates.docket)
+    else url.searchParams.delete('docket')
+  }
+  if ('stamp' in updates) {
+    if (updates.stamp) url.searchParams.set('stamp', '1')
+    else url.searchParams.delete('stamp')
+  }
+  const query = url.searchParams.toString()
+  return `${url.pathname}${query ? `?${query}` : ''}${url.hash}`
+}
+
+export type AppOverlay = 'none' | 'stamp' | { docket: string }
+
+export function overlaySearch(href: string, overlay: AppOverlay): string {
+  if (overlay === 'none') {
+    return applyAppSearch(href, { docket: null, stamp: false })
+  }
+  if (overlay === 'stamp') {
+    return applyAppSearch(href, { docket: null, stamp: true })
+  }
+  return applyAppSearch(href, { docket: overlay.docket, stamp: false })
+}
+
 export function imageFileError(file: {
   size: number
   type: string
