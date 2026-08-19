@@ -53,7 +53,7 @@ Do not delete `docket:writes:*` (daily write caps) or `docket:excluded` (bans). 
 2. Report case count, total JSON bytes for `{ cases }`, how many bytes notes add, and the largest case (name, bytes, note count). Do not dump note bodies.
 3. A line about 150 KB is a soft flag only. Do not change the list API unless the user asks.
 
-`size` uses the same 12-card feed, pubkey dedupe, and ban filter as the homepage. `list` still shows every stored id.
+`size` uses the same 8-card feed, pubkey dedupe, and ban filter as the homepage. `list` still shows every stored id.
 
 ## Redis keys
 
