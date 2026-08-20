@@ -4,7 +4,9 @@ import {
   clientsForPlatform,
   detectClientPlatform,
   encodeNevent,
+  encodeNpub,
   isWebClientHref,
+  type OpenInKind,
 } from './nostr-clients'
 import {
   canRequestVerdict,
@@ -772,15 +774,9 @@ function closeOpenInDialog() {
   }
 }
 
-function openNoteInClient(note: LocatedEvent) {
+function openInClient(kind: OpenInKind, code: string) {
+  if (!code) return
   closeOpenInDialog()
-
-  let nevent: string
-  try {
-    nevent = encodeNevent(note)
-  } catch {
-    return
-  }
 
   const clients = clientsForPlatform(detectClientPlatform())
   const dialog = document.createElement('dialog')
@@ -796,7 +792,7 @@ function openNoteInClient(note: LocatedEvent) {
   list.className = 'open-in-list'
 
   for (const [index, client] of clients.entries()) {
-    const href = clientHref(client, nevent)
+    const href = clientHref(client, code, kind)
     const link = document.createElement('a')
     link.className =
       index === 0 ? 'open-in-link primary' : 'open-in-link secondary'
@@ -823,6 +819,22 @@ function openNoteInClient(note: LocatedEvent) {
 
   document.body.append(dialog)
   dialog.showModal()
+}
+
+function openNoteInClient(note: LocatedEvent) {
+  try {
+    openInClient('note', encodeNevent(note))
+  } catch {
+    return
+  }
+}
+
+function openProfileInClient(pubkey: string) {
+  try {
+    openInClient('profile', encodeNpub(pubkey))
+  } catch {
+    return
+  }
 }
 
 function renderResult(
@@ -868,17 +880,26 @@ function buildResult(
     panel.append(banner)
   }
 
-  const mugshot = document.createElement('div')
+  const mugshot = document.createElement(snapshot ? 'button' : 'div')
   mugshot.className = 'mugshot'
   mugshot.append(createAnonAvatar())
+  if (snapshot && mugshot instanceof HTMLButtonElement) {
+    mugshot.type = 'button'
+    mugshot.setAttribute('aria-haspopup', 'dialog')
+    mugshot.setAttribute('aria-label', 'Open this profile in…')
+    mugshot.title = 'Open this profile in…'
+    mugshot.addEventListener('click', () => openProfileInClient(snapshot.pubkey))
+  }
 
   if (profile.picture) {
     const img = document.createElement('img')
     img.className = 'avatar'
     img.src = profile.picture
-    img.alt = profile.displayName
-      ? `Profile picture of ${profile.displayName}`
-      : 'Profile picture'
+    img.alt = snapshot
+      ? ''
+      : profile.displayName
+        ? `Profile picture of ${profile.displayName}`
+        : 'Profile picture'
     img.referrerPolicy = 'no-referrer'
     img.decoding = 'async'
     img.addEventListener('error', () => {
@@ -887,7 +908,7 @@ function buildResult(
     mugshot.append(img)
   }
 
-  const subject = document.createElement('p')
+  const subject = document.createElement(snapshot ? 'button' : 'p')
   subject.className = 'subject-name'
   subject.textContent = snapshot
     ? docketSubjectName({
@@ -895,6 +916,12 @@ function buildResult(
         pubkey: snapshot.pubkey,
       })
     : profile.displayName?.trim() || 'Unknown subject'
+  if (snapshot && subject instanceof HTMLButtonElement) {
+    subject.type = 'button'
+    subject.setAttribute('aria-haspopup', 'dialog')
+    subject.title = 'Open this profile in…'
+    subject.addEventListener('click', () => openProfileInClient(snapshot.pubkey))
+  }
 
   const stamp = document.createElement('div')
   stamp.className = `stamp ${verdict.verdict === 'ASSHOLE' ? 'bad' : 'good'}`
