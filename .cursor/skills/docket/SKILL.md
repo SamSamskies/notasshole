@@ -1,6 +1,6 @@
 ---
 name: docket
-description: List, delete, and ban AssholeNet public docket cases. Measure homepage docket list payload size and Redis storage vs the Upstash free-tier cap. Use when the user asks to delete a docket entry, clear the recent docket, list docket ids, ban/exclude/block a spammer npub from the feed, unban, manage stored judgements, check how big the docket list/payload is, or whether Redis is near the 256 MB free-tier limit.
+description: List, delete, and ban AssholeNet public docket cases. Patch missing displayName/picture on a stored case from a kind 0 or explicit name/URL. Measure homepage docket list payload size and Redis storage vs the Upstash free-tier cap. Use when the user asks to delete a docket entry, clear the recent docket, list docket ids, fix missing profile details on a docket card, ban/exclude/block a spammer npub from the feed, unban, manage stored judgements, check how big the docket list/payload is, or whether Redis is near the 256 MB free-tier limit.
 ---
 
 # Docket admin
@@ -12,6 +12,7 @@ node .cursor/skills/docket/scripts/docket.mjs list [--json]
 node .cursor/skills/docket/scripts/docket.mjs size [--json]
 node .cursor/skills/docket/scripts/docket.mjs usage [--json]
 node .cursor/skills/docket/scripts/docket.mjs get <id> [--json]
+node .cursor/skills/docket/scripts/docket.mjs set-profile <id> (--name <str> | --picture <url> | --kind0 <json>)...
 node .cursor/skills/docket/scripts/docket.mjs delete <id> [id...]
 node .cursor/skills/docket/scripts/docket.mjs clear --yes
 node .cursor/skills/docket/scripts/docket.mjs bans [--json]
@@ -22,6 +23,17 @@ node .cursor/skills/docket/scripts/docket.mjs unban <npub|hex> [npub...]
 Credentials come from `.env.local`: `KV_REST_API_URL` + `KV_REST_API_TOKEN` (or `UPSTASH_REDIS_REST_*`). Never print tokens or dump `.env.local`.
 
 Upstash REST is blocked in the default sandbox. Run these commands with unrestricted network (`required_permissions: ["all"]`).
+
+## Fix missing profile (displayName / picture)
+
+Some judgements land without a kind 0, so the card shows an empty name/avatar. Patch the stored snapshot — do not re-judge.
+
+1. `get <id>` (or `get <id> --json`) for the case. Note the `npub` / hex pubkey.
+2. Look up the user’s kind 0 (njump, relay, etc.). Confirm the event `pubkey` matches the case.
+3. Prefer `set-profile <id> --kind0 '<full kind 0 event JSON>'`. Explicit `--name` / `--display-name` and `--picture` also work and override kind 0 fields when both are passed.
+4. Report the updated name (and that picture was set). Do not dump note bodies.
+
+`--kind0` requires a **full kind 0 event** (`pubkey` + string `content`). It always compares `event.pubkey` to the case pubkey and refuses a mismatch — so a wrong paste cannot overwrite the card. Profile content alone is not enough. Unsafe picture URLs are also refused.
 
 ## Ban spammers (exclude npubs)
 
@@ -84,6 +96,8 @@ The CLI already `LREM`s the id, deletes the snapshot, and drops the pubkey point
 - “Unban npub1…” → `unban npub1…`
 - “Delete the NotBiebs docket” → `list --json`, match display name, `delete <id>`
 - “Clear the docket” → `clear --yes`
+- “This docket card has no name/avatar” → `get <id>`, find kind 0 event, `set-profile <id> --kind0 '…'` (pubkey must match)
+- “Set the profile on case …” → `set-profile <id> --name '…' --picture 'https://…'`
 - “How big is the docket list?” → `size`
 - “Check docket payload size” → `size --json`
 - “Are we near the Redis limit?” → `usage`
