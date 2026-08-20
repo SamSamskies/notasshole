@@ -7,6 +7,7 @@
  *   node .cursor/skills/docket/scripts/docket.mjs size [--json]
  *   node .cursor/skills/docket/scripts/docket.mjs usage [--json]
  *   node .cursor/skills/docket/scripts/docket.mjs get <id> [--json]
+ *   node .cursor/skills/docket/scripts/docket.mjs set-profile <id> (--name <str> | --picture <url> | --kind0 <json>)...
  *   node .cursor/skills/docket/scripts/docket.mjs delete <id> [id...]
  *   node .cursor/skills/docket/scripts/docket.mjs clear --yes
  *   node .cursor/skills/docket/scripts/docket.mjs bans [--json]
@@ -94,6 +95,7 @@ function usage() {
   node .cursor/skills/docket/scripts/docket.mjs size [--json]
   node .cursor/skills/docket/scripts/docket.mjs usage [--json]
   node .cursor/skills/docket/scripts/docket.mjs get <id> [--json]
+  node .cursor/skills/docket/scripts/docket.mjs set-profile <id> (--name <str> | --picture <url> | --kind0 <json>)...
   node .cursor/skills/docket/scripts/docket.mjs delete <id> [id...]
   node .cursor/skills/docket/scripts/docket.mjs clear --yes
   node .cursor/skills/docket/scripts/docket.mjs bans [--json]
@@ -101,14 +103,99 @@ function usage() {
   node .cursor/skills/docket/scripts/docket.mjs unban <npub|hex> [npub...]`)
 }
 
+/** Options that take a following value (or --key=value). */
+const VALUED_OPTIONS = new Set([
+  'name',
+  'display-name',
+  'picture',
+  'kind0',
+])
+
 function parseArgs(argv) {
   const flags = new Set()
+  const options = {}
   const positionals = []
-  for (const arg of argv) {
-    if (arg.startsWith('--')) flags.add(arg.slice(2))
-    else positionals.push(arg)
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]
+    if (!arg.startsWith('--')) {
+      positionals.push(arg)
+      continue
+    }
+    const body = arg.slice(2)
+    const eq = body.indexOf('=')
+    if (eq >= 0) {
+      options[body.slice(0, eq)] = body.slice(eq + 1)
+      continue
+    }
+    if (
+      VALUED_OPTIONS.has(body) &&
+      i + 1 < argv.length &&
+      !argv[i + 1].startsWith('--')
+    ) {
+      options[body] = argv[++i]
+      continue
+    }
+    flags.add(body)
   }
-  return { command: positionals[0], args: positionals.slice(1), flags }
+  return { command: positionals[0], args: positionals.slice(1), flags, options }
+}
+
+function isSafeHttpUrl(value) {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return false
+    if (url.username || url.password) return false
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Parse a kind 0 event JSON into profile fields. Requires event.pubkey. */
+function profileFromKind0(raw) {
+  let data
+  try {
+    data = typeof raw === 'string' ? JSON.parse(raw) : raw
+  } catch {
+    fail('--kind0 must be valid JSON (full kind 0 event)')
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    fail('--kind0 must be a JSON object (full kind 0 event)')
+  }
+  if (typeof data.content !== 'string') {
+    fail(
+      '--kind0 must be a full kind 0 event with string content (not profile content alone)',
+    )
+  }
+  const eventPubkey =
+    typeof data.pubkey === 'string' ? data.pubkey.trim().toLowerCase() : ''
+  if (!HEX_64.test(eventPubkey)) {
+    fail('--kind0 event must include a 64-char hex pubkey')
+  }
+  if (data.kind !== undefined && data.kind !== 0) {
+    fail(`--kind0 event kind must be 0 (got ${data.kind})`)
+  }
+  let content
+  try {
+    content = JSON.parse(data.content)
+  } catch {
+    fail('--kind0 event content is not valid JSON')
+  }
+  if (!content || typeof content !== 'object' || Array.isArray(content)) {
+    fail('--kind0 content must be a JSON object')
+  }
+  const displayName =
+    (typeof content.display_name === 'string' && content.display_name.trim()) ||
+    (typeof content.displayName === 'string' && content.displayName.trim()) ||
+    (typeof content.name === 'string' && content.name.trim()) ||
+    ''
+  const picture =
+    typeof content.picture === 'string' ? content.picture.trim() : ''
+  return {
+    displayName: displayName || undefined,
+    picture: picture && isSafeHttpUrl(picture) ? picture : undefined,
+    eventPubkey,
+  }
 }
 
 function summary(snapshot) {
@@ -388,15 +475,88 @@ async function cmdGet(redis, id, json) {
     return
   }
   const row = summary(snapshot)
+  const npub =
+    typeof snapshot.pubkey === 'string' && HEX_64.test(snapshot.pubkey)
+      ? toNpub(snapshot.pubkey)
+      : ''
   console.log(
     [
       `id: ${row.id}`,
       `judgedAt: ${row.judgedAt}`,
       `verdict: ${row.verdict}`,
       `name: ${row.displayName || '(none)'}`,
+      `picture: ${typeof snapshot.picture === 'string' && snapshot.picture ? snapshot.picture : '(none)'}`,
       `pubkey: ${row.pubkey}`,
+      ...(npub ? [`npub: ${npub}`] : []),
       `reason: ${row.reason}`,
       `notes: ${Array.isArray(snapshot.notes) ? snapshot.notes.length : 0}`,
+    ].join('\n'),
+  )
+}
+
+async function cmdSetProfile(redis, id, options, json) {
+  if (!CASE_ID_RE.test(id)) fail(`Invalid case id: ${id}`)
+  const snapshot = await redis.get(caseKey(id))
+  if (!snapshot || typeof snapshot !== 'object') fail(`Not found: ${id}`)
+
+  let displayName =
+    options.name?.trim() || options['display-name']?.trim() || undefined
+  let picture = options.picture?.trim() || undefined
+  let kind0Pubkey
+
+  if (options.kind0 !== undefined) {
+    const fromKind0 = profileFromKind0(options.kind0)
+    kind0Pubkey = fromKind0.eventPubkey
+    if (!displayName && fromKind0.displayName) {
+      displayName = fromKind0.displayName
+    }
+    if (!picture && fromKind0.picture) picture = fromKind0.picture
+  }
+
+  if (!displayName && !picture) {
+    fail(
+      'set-profile needs --name / --display-name, --picture, and/or --kind0 <json>',
+    )
+  }
+  if (picture && !isSafeHttpUrl(picture)) {
+    fail(`Unsafe or invalid picture URL: ${picture}`)
+  }
+  if (kind0Pubkey) {
+    const casePubkey =
+      typeof snapshot.pubkey === 'string'
+        ? snapshot.pubkey.trim().toLowerCase()
+        : ''
+    if (!HEX_64.test(casePubkey)) {
+      fail(`Case ${id} has no valid pubkey to compare against kind 0`)
+    }
+    if (kind0Pubkey !== casePubkey) {
+      fail(
+        `kind 0 pubkey ${kind0Pubkey} does not match case pubkey ${casePubkey}`,
+      )
+    }
+  }
+
+  const updated = { ...snapshot }
+  if (displayName) updated.displayName = displayName
+  if (picture) updated.picture = picture
+  await redis.set(caseKey(id), updated)
+
+  const result = {
+    id: updated.id,
+    pubkey: updated.pubkey,
+    displayName: updated.displayName ?? '',
+    picture: updated.picture ?? '',
+  }
+  if (json) {
+    console.log(JSON.stringify(result, null, 2))
+    return
+  }
+  console.log(
+    [
+      `updated ${result.id}`,
+      `name: ${result.displayName || '(none)'}`,
+      `picture: ${result.picture || '(none)'}`,
+      `pubkey: ${result.pubkey}`,
     ].join('\n'),
   )
 }
@@ -536,7 +696,7 @@ async function cmdUnban(redis, tokens) {
   console.log(`${count} excluded`)
 }
 
-const { command, args, flags } = parseArgs(process.argv.slice(2))
+const { command, args, flags, options } = parseArgs(process.argv.slice(2))
 if (!command || command === 'help' || flags.has('help')) {
   usage()
   process.exit(command ? 0 : 1)
@@ -558,6 +718,10 @@ switch (command) {
   case 'get':
     if (!args[0]) fail('get requires a case id')
     await cmdGet(redis, args[0], json)
+    break
+  case 'set-profile':
+    if (!args[0]) fail('set-profile requires a case id')
+    await cmdSetProfile(redis, args[0], options, json)
     break
   case 'delete':
     await cmdDelete(redis, args)
