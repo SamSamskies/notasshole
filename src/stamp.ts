@@ -17,7 +17,7 @@ export type StampBox = {
 
 export const MAX_IMAGE_BYTES = 12 * 1024 * 1024
 export const MAX_EXPORT_EDGE = 4096
-export const STAMP_SCALE_MIN = 0.55
+export const STAMP_SCALE_MIN = 0.2
 export const STAMP_SCALE_MAX = 1.75
 export const STAMP_SCALE_DEFAULT = 1
 
@@ -106,11 +106,11 @@ export function clamp01(value: number): number {
 }
 
 export function stampFontSize(imageWidth: number, scale: number): number {
-  return Math.max(14, imageWidth * 0.078 * scale)
+  return Math.max(8, imageWidth * 0.078 * scale)
 }
 
 export function stampStrokeWidth(imageWidth: number, scale: number): number {
-  return Math.max(3, stampFontSize(imageWidth, scale) * 0.08)
+  return Math.max(1.5, stampFontSize(imageWidth, scale) * 0.08)
 }
 
 /** Inset as a fraction of the photo so the stamp does not sit flush to the crop. */
