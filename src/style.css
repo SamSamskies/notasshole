@@ -381,6 +381,130 @@ button.brand:focus-visible {
   gap: 0.75rem;
 }
 
+.mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+  padding: 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #eef1f5;
+}
+
+.mode-toggle-btn {
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  min-height: 2.5rem;
+}
+
+.mode-toggle-btn[aria-selected='true'] {
+  background: var(--ink);
+  color: #fff;
+  box-shadow: 0 6px 14px rgba(20, 24, 32, 0.16);
+}
+
+.mode-toggle-btn:hover:not([aria-selected='true']) {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.mode-toggle-btn:focus-visible {
+  outline: 2px solid var(--mustard-deep);
+  outline-offset: 2px;
+}
+
+.battle-vs {
+  margin: 0.15rem 0;
+  text-align: center;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.15rem;
+  letter-spacing: 0.12em;
+  color: var(--mustard-deep);
+}
+
+.battle-form .identity-combobox + .battle-vs {
+  margin-top: 0.1rem;
+}
+
+.panel.battle-result,
+.shell:has(.battle-result) > .actions {
+  width: min(40rem, 100%);
+}
+
+.battle-arena {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: start;
+  gap: 0.65rem 0.75rem;
+  margin: 0 0 1.1rem;
+}
+
+.battle-fighter {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  transition: opacity 0.25s ease, filter 0.25s ease;
+}
+
+.battle-fighter .mugshot {
+  margin-bottom: 0.35rem;
+}
+
+.battle-fighter .subject-name {
+  margin: 0;
+  max-width: 100%;
+  font-size: clamp(0.95rem, 3.5vw, 1.15rem);
+  overflow-wrap: anywhere;
+}
+
+.battle-fighter.loser {
+  opacity: 0.55;
+  filter: grayscale(0.35);
+}
+
+.battle-fighter.winner .mugshot {
+  border-color: var(--danger);
+  box-shadow: 0 8px 18px rgba(194, 31, 31, 0.22);
+}
+
+.battle-role {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.battle-fighter.winner .battle-role {
+  color: var(--danger);
+}
+
+.battle-vs-result {
+  align-self: center;
+  margin: 1.6rem 0 0;
+  font-size: 0.95rem;
+  letter-spacing: 0.16em;
+}
+
+.battle-result .stamp {
+  margin-top: 0.35rem;
+}
+
 .identity-combobox {
   position: relative;
 }
@@ -1472,6 +1596,20 @@ a.open-in-link:focus-visible {
   .actions .primary,
   .actions .secondary {
     width: 100%;
+  }
+
+  .battle-arena {
+    gap: 0.45rem 0.4rem;
+  }
+
+  .battle-fighter .mugshot {
+    width: 4.5rem;
+    height: 4.5rem;
+  }
+
+  .battle-vs-result {
+    margin-top: 1.25rem;
+    font-size: 0.8rem;
   }
 
   .stamp-overlay[open] {

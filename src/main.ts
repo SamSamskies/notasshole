@@ -75,6 +75,30 @@ const INFERENCE_LOADING_MESSAGES = [
   'CHECKING FOR "WELL ACTUALLY"...',
 ]
 
+const BATTLE_LOADING_MESSAGES = [
+  'WEIGHING THE ASSHOLES...',
+  'COMPARING REPLY-GUY ENERGY...',
+  'STACKING THE RECEIPTS...',
+  'MEASURING MUTUAL CONDESCENSION...',
+  'CONSULTING THE THUNDERDOME...',
+]
+
+type JudgeMode = 'judge' | 'battle'
+
+type BattleOutcome = 'a' | 'b' | 'tie-assholes' | 'tie-civil'
+
+type BattleVerdict = {
+  outcome: BattleOutcome
+  confidence: number
+  reason: string
+  model?: string
+}
+
+type BattleFighter = {
+  label: string
+  profile: ProfileInfo
+}
+
 type AppState =
   | { view: 'idle' }
   | { view: 'loading'; message: string }
@@ -95,6 +119,12 @@ type AppState =
         pubkey: string
       }
     }
+  | {
+      view: 'battle-result'
+      verdict: BattleVerdict
+      left: BattleFighter
+      right: BattleFighter
+    }
 
 const appEl = document.querySelector<HTMLDivElement>('#app')
 if (!appEl) throw new Error('#app missing')
@@ -103,8 +133,11 @@ const app = appEl
 let state: AppState = { view: 'idle' }
 let loadingTimer: number | undefined
 let abortController: AbortController | undefined
-let comboboxCleanup: (() => void) | undefined
+let comboboxCleanups: Array<() => void> = []
+let judgeMode: JudgeMode = 'judge'
 let lastInput = ''
+let lastBattleLeft = ''
+let lastBattleRight = ''
 let docketList: DocketCase[] | undefined
 let docketRefresh: Promise<void> | undefined
 let docketOverlay: DocketOverlay = { status: 'closed' }
@@ -562,7 +595,10 @@ function renderShell(
   const tagline = document.createElement('p')
   tagline.className = 'tagline'
   tagline.textContent =
-    options?.tagline ?? 'Advanced AI-powered Nostr personality analysis.'
+    options?.tagline ??
+    (judgeMode === 'battle'
+      ? 'Two public Nostr personalities. One bigger asshole.'
+      : 'Advanced AI-powered Nostr personality analysis.')
 
   header.append(brand, tagline)
   shell.append(header, content)
@@ -573,44 +609,138 @@ function renderShell(
   app.append(shell)
 }
 
+function clearComboboxes() {
+  for (const cleanup of comboboxCleanups) cleanup()
+  comboboxCleanups = []
+}
+
+function attachFormCombobox(input: HTMLInputElement, idPrefix: string) {
+  comboboxCleanups.push(attachIdentityCombobox(input, { idPrefix }))
+}
+
+function setJudgeMode(mode: JudgeMode) {
+  if (judgeMode === mode) return
+  judgeMode = mode
+  if (state.view === 'idle') render()
+}
+
+function createModeToggle(): HTMLElement {
+  const group = document.createElement('div')
+  group.className = 'mode-toggle'
+  group.setAttribute('role', 'tablist')
+  group.setAttribute('aria-label', 'Judgment mode')
+
+  for (const mode of ['judge', 'battle'] as const) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'mode-toggle-btn'
+    button.setAttribute('role', 'tab')
+    button.setAttribute('aria-selected', judgeMode === mode ? 'true' : 'false')
+    button.textContent = mode === 'judge' ? 'SINGLE' : 'BATTLE'
+    button.addEventListener('click', () => setJudgeMode(mode))
+    group.append(button)
+  }
+
+  return group
+}
+
+function createIdentityField(options: {
+  id: string
+  name: string
+  label: string
+  placeholder: string
+  value: string
+}): { label: HTMLLabelElement; input: HTMLInputElement } {
+  const label = document.createElement('label')
+  label.className = 'sr-only'
+  label.htmlFor = options.id
+  label.textContent = options.label
+
+  const input = document.createElement('input')
+  input.id = options.id
+  input.name = options.name
+  input.type = 'text'
+  input.autocomplete = 'off'
+  input.spellcheck = false
+  input.placeholder = options.placeholder
+  input.value = options.value
+  input.required = true
+
+  return { label, input }
+}
+
 function renderForm(): HTMLElement {
   const panel = document.createElement('section')
   panel.className = 'panel'
 
   const form = document.createElement('form')
-  form.className = 'judge-form'
+  form.className =
+    judgeMode === 'battle' ? 'judge-form battle-form' : 'judge-form'
   form.addEventListener('submit', (event) => {
     event.preventDefault()
+    if (judgeMode === 'battle') {
+      const left = form.querySelector<HTMLInputElement>('#battle-left')
+      const right = form.querySelector<HTMLInputElement>('#battle-right')
+      void battle(left?.value ?? '', right?.value ?? '')
+      return
+    }
     const input = form.querySelector<HTMLInputElement>('#identity')
     void judge(input?.value ?? '')
   })
 
-  const label = document.createElement('label')
-  label.className = 'sr-only'
-  label.htmlFor = 'identity'
-  label.textContent = 'Nostr identity'
+  form.append(createModeToggle())
 
-  const input = document.createElement('input')
-  input.id = 'identity'
-  input.name = 'identity'
-  input.type = 'text'
-  input.autocomplete = 'off'
-  input.spellcheck = false
-  input.placeholder = 'name, npub, nprofile, nip05, or pubkey'
-  input.value = lastInput
-  input.required = true
+  clearComboboxes()
+
+  if (judgeMode === 'battle') {
+    const left = createIdentityField({
+      id: 'battle-left',
+      name: 'battleLeft',
+      label: 'Contender A',
+      placeholder: 'name, npub, nprofile, nip05, or pubkey',
+      value: lastBattleLeft,
+    })
+    const right = createIdentityField({
+      id: 'battle-right',
+      name: 'battleRight',
+      label: 'Contender B',
+      placeholder: 'name, npub, nprofile, nip05, or pubkey',
+      value: lastBattleRight,
+    })
+
+    const versus = document.createElement('p')
+    versus.className = 'battle-vs'
+    versus.setAttribute('aria-hidden', 'true')
+    versus.textContent = 'VS'
+
+    const button = document.createElement('button')
+    button.type = 'submit'
+    button.className = 'primary'
+    button.textContent = 'JUDGE'
+
+    form.append(left.label, left.input, versus, right.label, right.input, button)
+    panel.append(form)
+    attachFormCombobox(left.input, 'battle-left')
+    attachFormCombobox(right.input, 'battle-right')
+    return panel
+  }
+
+  const field = createIdentityField({
+    id: 'identity',
+    name: 'identity',
+    label: 'Nostr identity',
+    placeholder: 'name, npub, nprofile, nip05, or pubkey',
+    value: lastInput,
+  })
 
   const button = document.createElement('button')
   button.type = 'submit'
   button.className = 'primary'
   button.textContent = 'JUDGE'
 
-  form.append(label, input, button)
+  form.append(field.label, field.input, button)
   panel.append(form)
-
-  comboboxCleanup?.()
-  comboboxCleanup = attachIdentityCombobox(input)
-
+  attachFormCombobox(field.input, 'identity')
   return panel
 }
 
@@ -708,14 +838,20 @@ function renderError(
     retry.type = 'button'
     retry.className = 'primary'
     retry.textContent = 'TRY AGAIN'
-    retry.addEventListener('click', () => void judge(lastInput))
+    retry.addEventListener('click', () => {
+      if (judgeMode === 'battle') {
+        void battle(lastBattleLeft, lastBattleRight)
+        return
+      }
+      void judge(lastInput)
+    })
     actions.append(retry)
   }
 
   const again = document.createElement('button')
   again.type = 'button'
   again.className = 'secondary'
-  again.textContent = 'JUDGE ANOTHER'
+  again.textContent = judgeMode === 'battle' ? 'NEW BATTLE' : 'JUDGE ANOTHER'
   again.addEventListener('click', () => {
     abortController?.abort()
     stopLoadingCycle()
@@ -1005,19 +1141,250 @@ function buildResult(
   return { panel, actions, toggle, again }
 }
 
+function createFighterCard(
+  fighter: BattleFighter,
+  role: 'winner' | 'loser' | 'tied',
+): HTMLElement {
+  const card = document.createElement('div')
+  card.className = `battle-fighter ${role}`
+
+  const mugshot = document.createElement('div')
+  mugshot.className = 'mugshot'
+  mugshot.append(createAnonAvatar())
+  if (fighter.profile.picture) {
+    const img = document.createElement('img')
+    img.className = 'avatar'
+    img.src = fighter.profile.picture
+    img.alt = fighter.profile.displayName
+      ? `Profile picture of ${fighter.profile.displayName}`
+      : 'Profile picture'
+    img.referrerPolicy = 'no-referrer'
+    img.decoding = 'async'
+    img.addEventListener('error', () => {
+      img.remove()
+    })
+    mugshot.append(img)
+  }
+
+  const name = document.createElement('p')
+  name.className = 'subject-name'
+  name.textContent = fighter.label
+
+  card.append(mugshot, name)
+  if (role === 'winner') {
+    const badge = document.createElement('p')
+    badge.className = 'battle-role'
+    badge.textContent = 'King asshole'
+    card.append(badge)
+  }
+  return card
+}
+
+function battleStampCopy(outcome: BattleOutcome): { text: string; tone: string } {
+  switch (outcome) {
+    case 'a':
+    case 'b':
+      return { text: '🚨 KING ASSHOLE', tone: 'bad' }
+    case 'tie-assholes':
+      return { text: '🚨 MUTUAL ASSHOLERY', tone: 'bad' }
+    case 'tie-civil':
+      return { text: '✅ DISAPPOINTINGLY CIVIL', tone: 'good' }
+  }
+}
+
+function renderBattleResult(
+  verdict: BattleVerdict,
+  left: BattleFighter,
+  right: BattleFighter,
+) {
+  const panel = document.createElement('section')
+  panel.className = 'panel result-panel battle-result'
+
+  const arena = document.createElement('div')
+  arena.className = 'battle-arena'
+  arena.setAttribute('aria-label', 'Battle contenders')
+
+  const leftRole =
+    verdict.outcome === 'a'
+      ? 'winner'
+      : verdict.outcome === 'b'
+        ? 'loser'
+        : 'tied'
+  const rightRole =
+    verdict.outcome === 'b'
+      ? 'winner'
+      : verdict.outcome === 'a'
+        ? 'loser'
+        : 'tied'
+
+  const versus = document.createElement('p')
+  versus.className = 'battle-vs battle-vs-result'
+  versus.setAttribute('aria-hidden', 'true')
+  versus.textContent = 'VS'
+
+  arena.append(
+    createFighterCard(left, leftRole),
+    versus,
+    createFighterCard(right, rightRole),
+  )
+
+  const stampCopy = battleStampCopy(verdict.outcome)
+  const stamp = document.createElement('div')
+  stamp.className = `stamp ${stampCopy.tone}`
+  stamp.textContent = stampCopy.text
+
+  const confidence = document.createElement('p')
+  confidence.className = 'confidence'
+  confidence.textContent = `${verdict.confidence}% CONFIDENCE`
+
+  const reason = document.createElement('blockquote')
+  reason.className = 'reason'
+  reason.textContent = verdict.reason
+
+  const meta = document.createElement('p')
+  meta.className = 'meta'
+  meta.textContent = 'UI preview — AI battle judging not wired yet.'
+
+  const judgedBy = document.createElement('p')
+  judgedBy.className = 'judged-by'
+  const judgedLabel = document.createElement('span')
+  judgedLabel.className = 'judged-by-label'
+  judgedLabel.textContent = 'Judged by'
+  const judgedModel = document.createElement('span')
+  judgedModel.className = 'judged-by-model'
+  judgedModel.textContent = displayModelName(verdict.model)
+  judgedBy.append(judgedLabel, document.createTextNode(' '), judgedModel)
+
+  const actions = document.createElement('div')
+  actions.className = 'actions'
+
+  const again = document.createElement('button')
+  again.type = 'button'
+  again.className = 'primary'
+  again.textContent = 'NEW BATTLE'
+  again.addEventListener('click', () => goIdle())
+
+  actions.append(again)
+
+  panel.append(
+    arena,
+    stamp,
+    confidence,
+    reason,
+    meta,
+    judgedBy,
+    createDisclaimer(),
+  )
+  renderShell(panel, { after: actions, disclaimer: false })
+}
+
+function mockBattleVerdict(leftLabel: string, rightLabel: string): BattleVerdict {
+  const score =
+    [...`${leftLabel}\0${rightLabel}`].reduce(
+      (sum, char) => sum + char.charCodeAt(0),
+      0,
+    ) % 4
+
+  if (score === 0) {
+    return {
+      outcome: 'a',
+      confidence: 78,
+      reason: `${leftLabel} edges it — more unsolicited advice per note, less self-awareness per paragraph.`,
+      model: 'preview-mock',
+    }
+  }
+  if (score === 1) {
+    return {
+      outcome: 'b',
+      confidence: 71,
+      reason: `${rightLabel} takes the belt. The ratio of dunks to substance is simply unmatched.`,
+      model: 'preview-mock',
+    }
+  }
+  if (score === 2) {
+    return {
+      outcome: 'tie-assholes',
+      confidence: 66,
+      reason: `Mutual assholery. ${leftLabel} and ${rightLabel} are different flavors of the same problem.`,
+      model: 'preview-mock',
+    }
+  }
+  return {
+    outcome: 'tie-civil',
+    confidence: 62,
+    reason: `Disappointingly civil. ${leftLabel} and ${rightLabel} left AssholeNet with nothing spicy to work with.`,
+    model: 'preview-mock',
+  }
+}
+
+function fighterLabel(raw: string): string {
+  const trimmed = raw.trim()
+  if (!trimmed) return 'Unknown subject'
+  if (trimmed.length <= 28) return trimmed
+  return `${trimmed.slice(0, 25)}…`
+}
+
+async function battle(rawLeft: string, rawRight: string) {
+  lastBattleLeft = rawLeft.trim()
+  lastBattleRight = rawRight.trim()
+  closeDocket({ replaceUrl: false })
+  closeStamp({ replaceUrl: false })
+  syncOverlayUrl('none')
+  abortController?.abort()
+  abortController = new AbortController()
+  const signal = abortController.signal
+
+  if (!lastBattleLeft || !lastBattleRight) {
+    setState({
+      view: 'error',
+      title: 'NEED TWO CONTENDERS',
+      detail: 'Enter two Nostr identities before starting a battle.',
+      retryable: false,
+    })
+    return
+  }
+
+  if (lastBattleLeft.toLowerCase() === lastBattleRight.toLowerCase()) {
+    setState({
+      view: 'error',
+      title: 'THAT IS JUST ONE PERSON',
+      detail: 'Pick two different identities. Fighting yourself is a different product.',
+      retryable: false,
+    })
+    return
+  }
+
+  startLoadingCycle(BATTLE_LOADING_MESSAGES)
+
+  // UI preview only — swap this for real note fetch + comparative judgment later.
+  await new Promise((resolve) => window.setTimeout(resolve, 2200))
+  if (!isActiveJudge(signal)) return
+
+  stopLoadingCycle()
+  const leftLabel = fighterLabel(lastBattleLeft)
+  const rightLabel = fighterLabel(lastBattleRight)
+  setState({
+    view: 'battle-result',
+    verdict: mockBattleVerdict(leftLabel, rightLabel),
+    left: { label: leftLabel, profile: { displayName: leftLabel } },
+    right: { label: rightLabel, profile: { displayName: rightLabel } },
+  })
+}
+
 function render() {
   closeOpenInDialog()
 
   if (state.view !== 'idle') {
-    comboboxCleanup?.()
-    comboboxCleanup = undefined
+    clearComboboxes()
   }
 
   switch (state.view) {
     case 'idle':
       renderShell(renderForm(), { after: renderDocket(docketList) })
       if (!docketIdFromSearch() && !isStampSearch()) {
-        document.querySelector<HTMLInputElement>('#identity')?.focus()
+        const focusId =
+          judgeMode === 'battle' ? '#battle-left' : '#identity'
+        document.querySelector<HTMLInputElement>(focusId)?.focus()
       }
       void refreshDocket()
       break
@@ -1043,6 +1410,9 @@ function render() {
         state.showNotes,
         state.snapshot,
       )
+      break
+    case 'battle-result':
+      renderBattleResult(state.verdict, state.left, state.right)
       break
   }
 }
