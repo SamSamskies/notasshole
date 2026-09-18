@@ -566,6 +566,12 @@ function createDisclaimer(snapshot = false, text?: string): HTMLParagraphElement
   return disclaimer
 }
 
+function idleTagline(): string {
+  return judgeMode === 'battle'
+    ? 'Two public Nostr personalities. One bigger asshole.'
+    : 'Advanced AI-powered Nostr personality analysis.'
+}
+
 function renderShell(
   content: HTMLElement,
   options?: {
@@ -589,11 +595,7 @@ function renderShell(
 
   const tagline = document.createElement('p')
   tagline.className = 'tagline'
-  tagline.textContent =
-    options?.tagline ??
-    (judgeMode === 'battle'
-      ? 'Two public Nostr personalities. One bigger asshole.'
-      : 'Advanced AI-powered Nostr personality analysis.')
+  tagline.textContent = options?.tagline ?? idleTagline()
 
   header.append(brand, tagline)
   shell.append(header, content)
@@ -630,7 +632,21 @@ function setJudgeMode(mode: JudgeMode) {
   if (judgeMode === mode) return
   captureIdleFormDraft()
   judgeMode = mode
-  if (state.view === 'idle') render()
+  if (state.view !== 'idle') return
+
+  // Swap form + tagline in place so the recent docket is not remounted
+  // (full render() would replay .docket's rise animation and look like flicker).
+  const tagline = document.querySelector('.tagline')
+  if (tagline) tagline.textContent = idleTagline()
+
+  const panel = document.querySelector('.panel')
+  if (!panel) {
+    render()
+    return
+  }
+  panel.replaceWith(renderForm())
+  const focusId = judgeMode === 'battle' ? '#battle-left' : '#identity'
+  document.querySelector<HTMLInputElement>(focusId)?.focus()
 }
 
 function createModeToggle(): HTMLElement {
