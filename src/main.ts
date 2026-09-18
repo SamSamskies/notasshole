@@ -16,8 +16,11 @@ import {
   GeminiConsentRequiredError,
   QuotaExhaustedError,
   RateLimitedError,
+  requestBattleVerdict,
   requestVerdict,
   VerdictParseError,
+  type BattleOutcome,
+  type BattleVerdict,
   type Verdict,
 } from './inference'
 import { attachIdentityCombobox } from './identity-combobox'
@@ -75,6 +78,22 @@ const INFERENCE_LOADING_MESSAGES = [
   'CHECKING FOR "WELL ACTUALLY"...',
 ]
 
+const BATTLE_LOADING_MESSAGES = [
+  'WEIGHING THE ASSHOLES...',
+  'COMPARING REPLY-GUY ENERGY...',
+  'STACKING THE RECEIPTS...',
+  'MEASURING MUTUAL CONDESCENSION...',
+  'CONSULTING THE THUNDERDOME...',
+]
+
+type JudgeMode = 'judge' | 'battle'
+
+type BattleFighter = {
+  label: string
+  profile: ProfileInfo
+  noteCount: number
+}
+
 type AppState =
   | { view: 'idle' }
   | { view: 'loading'; message: string }
@@ -95,6 +114,12 @@ type AppState =
         pubkey: string
       }
     }
+  | {
+      view: 'battle-result'
+      verdict: BattleVerdict
+      left: BattleFighter
+      right: BattleFighter
+    }
 
 const appEl = document.querySelector<HTMLDivElement>('#app')
 if (!appEl) throw new Error('#app missing')
@@ -103,8 +128,11 @@ const app = appEl
 let state: AppState = { view: 'idle' }
 let loadingTimer: number | undefined
 let abortController: AbortController | undefined
-let comboboxCleanup: (() => void) | undefined
+let comboboxCleanups: Array<() => void> = []
+let judgeMode: JudgeMode = 'judge'
 let lastInput = ''
+let lastBattleLeft = ''
+let lastBattleRight = ''
 let docketList: DocketCase[] | undefined
 let docketRefresh: Promise<void> | undefined
 let docketOverlay: DocketOverlay = { status: 'closed' }
@@ -538,6 +566,12 @@ function createDisclaimer(snapshot = false, text?: string): HTMLParagraphElement
   return disclaimer
 }
 
+function idleTagline(): string {
+  return judgeMode === 'battle'
+    ? 'Two public Nostr personalities. One bigger asshole.'
+    : 'Advanced AI-powered Nostr personality analysis.'
+}
+
 function renderShell(
   content: HTMLElement,
   options?: {
@@ -561,8 +595,7 @@ function renderShell(
 
   const tagline = document.createElement('p')
   tagline.className = 'tagline'
-  tagline.textContent =
-    options?.tagline ?? 'Advanced AI-powered Nostr personality analysis.'
+  tagline.textContent = options?.tagline ?? idleTagline()
 
   header.append(brand, tagline)
   shell.append(header, content)
@@ -573,44 +606,166 @@ function renderShell(
   app.append(shell)
 }
 
+function clearComboboxes() {
+  for (const cleanup of comboboxCleanups) cleanup()
+  comboboxCleanups = []
+}
+
+function attachFormCombobox(input: HTMLInputElement, idPrefix: string) {
+  comboboxCleanups.push(attachIdentityCombobox(input, { idPrefix }))
+}
+
+function captureIdleFormDraft() {
+  if (state.view !== 'idle') return
+  if (judgeMode === 'battle') {
+    const left = app.querySelector<HTMLInputElement>('#battle-left')
+    const right = app.querySelector<HTMLInputElement>('#battle-right')
+    if (left) lastBattleLeft = left.value
+    if (right) lastBattleRight = right.value
+    return
+  }
+  const input = app.querySelector<HTMLInputElement>('#identity')
+  if (input) lastInput = input.value
+}
+
+function setJudgeMode(mode: JudgeMode) {
+  if (judgeMode === mode) return
+  captureIdleFormDraft()
+  judgeMode = mode
+  if (state.view !== 'idle') return
+
+  // Swap form + tagline in place so the recent docket is not remounted
+  // (full render() would replay .docket's rise animation and look like flicker).
+  const tagline = document.querySelector('.tagline')
+  if (tagline) tagline.textContent = idleTagline()
+
+  const panel = document.querySelector('.panel')
+  if (!panel) {
+    render()
+    return
+  }
+  panel.replaceWith(renderForm())
+  const focusId = judgeMode === 'battle' ? '#battle-left' : '#identity'
+  document.querySelector<HTMLInputElement>(focusId)?.focus()
+}
+
+function createModeToggle(): HTMLElement {
+  const group = document.createElement('div')
+  group.className = 'mode-toggle'
+  group.setAttribute('role', 'tablist')
+  group.setAttribute('aria-label', 'Judgment mode')
+
+  for (const mode of ['judge', 'battle'] as const) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'mode-toggle-btn'
+    button.setAttribute('role', 'tab')
+    button.setAttribute('aria-selected', judgeMode === mode ? 'true' : 'false')
+    button.textContent = mode === 'judge' ? 'SINGLE' : 'BATTLE'
+    button.addEventListener('click', () => setJudgeMode(mode))
+    group.append(button)
+  }
+
+  return group
+}
+
+function createIdentityField(options: {
+  id: string
+  name: string
+  label: string
+  placeholder: string
+  value: string
+}): { label: HTMLLabelElement; input: HTMLInputElement } {
+  const label = document.createElement('label')
+  label.className = 'sr-only'
+  label.htmlFor = options.id
+  label.textContent = options.label
+
+  const input = document.createElement('input')
+  input.id = options.id
+  input.name = options.name
+  input.type = 'text'
+  input.autocomplete = 'off'
+  input.spellcheck = false
+  input.placeholder = options.placeholder
+  input.value = options.value
+  input.required = true
+
+  return { label, input }
+}
+
 function renderForm(): HTMLElement {
   const panel = document.createElement('section')
   panel.className = 'panel'
 
   const form = document.createElement('form')
-  form.className = 'judge-form'
+  form.className =
+    judgeMode === 'battle' ? 'judge-form battle-form' : 'judge-form'
   form.addEventListener('submit', (event) => {
     event.preventDefault()
+    if (judgeMode === 'battle') {
+      const left = form.querySelector<HTMLInputElement>('#battle-left')
+      const right = form.querySelector<HTMLInputElement>('#battle-right')
+      void battle(left?.value ?? '', right?.value ?? '')
+      return
+    }
     const input = form.querySelector<HTMLInputElement>('#identity')
     void judge(input?.value ?? '')
   })
 
-  const label = document.createElement('label')
-  label.className = 'sr-only'
-  label.htmlFor = 'identity'
-  label.textContent = 'Nostr identity'
+  form.append(createModeToggle())
 
-  const input = document.createElement('input')
-  input.id = 'identity'
-  input.name = 'identity'
-  input.type = 'text'
-  input.autocomplete = 'off'
-  input.spellcheck = false
-  input.placeholder = 'name, npub, nprofile, nip05, or pubkey'
-  input.value = lastInput
-  input.required = true
+  clearComboboxes()
+
+  if (judgeMode === 'battle') {
+    const left = createIdentityField({
+      id: 'battle-left',
+      name: 'battleLeft',
+      label: 'Contender A',
+      placeholder: 'name, npub, nprofile, nip05, or pubkey',
+      value: lastBattleLeft,
+    })
+    const right = createIdentityField({
+      id: 'battle-right',
+      name: 'battleRight',
+      label: 'Contender B',
+      placeholder: 'name, npub, nprofile, nip05, or pubkey',
+      value: lastBattleRight,
+    })
+
+    const versus = document.createElement('p')
+    versus.className = 'battle-vs'
+    versus.setAttribute('aria-hidden', 'true')
+    versus.textContent = 'VS'
+
+    const button = document.createElement('button')
+    button.type = 'submit'
+    button.className = 'primary'
+    button.textContent = 'JUDGE'
+
+    form.append(left.label, left.input, versus, right.label, right.input, button)
+    panel.append(form)
+    attachFormCombobox(left.input, 'battle-left')
+    attachFormCombobox(right.input, 'battle-right')
+    return panel
+  }
+
+  const field = createIdentityField({
+    id: 'identity',
+    name: 'identity',
+    label: 'Nostr identity',
+    placeholder: 'name, npub, nprofile, nip05, or pubkey',
+    value: lastInput,
+  })
 
   const button = document.createElement('button')
   button.type = 'submit'
   button.className = 'primary'
   button.textContent = 'JUDGE'
 
-  form.append(label, input, button)
+  form.append(field.label, field.input, button)
   panel.append(form)
-
-  comboboxCleanup?.()
-  comboboxCleanup = attachIdentityCombobox(input)
-
+  attachFormCombobox(field.input, 'identity')
   return panel
 }
 
@@ -708,14 +863,20 @@ function renderError(
     retry.type = 'button'
     retry.className = 'primary'
     retry.textContent = 'TRY AGAIN'
-    retry.addEventListener('click', () => void judge(lastInput))
+    retry.addEventListener('click', () => {
+      if (judgeMode === 'battle') {
+        void battle(lastBattleLeft, lastBattleRight)
+        return
+      }
+      void judge(lastInput)
+    })
     actions.append(retry)
   }
 
   const again = document.createElement('button')
   again.type = 'button'
   again.className = 'secondary'
-  again.textContent = 'JUDGE ANOTHER'
+  again.textContent = judgeMode === 'battle' ? 'NEW BATTLE' : 'JUDGE ANOTHER'
   again.addEventListener('click', () => {
     abortController?.abort()
     stopLoadingCycle()
@@ -1005,19 +1166,430 @@ function buildResult(
   return { panel, actions, toggle, again }
 }
 
+function createFighterCard(
+  fighter: BattleFighter,
+  role: 'winner' | 'loser' | 'tied',
+): HTMLElement {
+  const card = document.createElement('div')
+  card.className = `battle-fighter ${role}`
+
+  const mugshot = document.createElement('div')
+  mugshot.className = 'mugshot'
+  mugshot.append(createAnonAvatar())
+  if (fighter.profile.picture) {
+    const img = document.createElement('img')
+    img.className = 'avatar'
+    img.src = fighter.profile.picture
+    img.alt = fighter.profile.displayName
+      ? `Profile picture of ${fighter.profile.displayName}`
+      : 'Profile picture'
+    img.referrerPolicy = 'no-referrer'
+    img.decoding = 'async'
+    img.addEventListener('error', () => {
+      img.remove()
+    })
+    mugshot.append(img)
+  }
+
+  const name = document.createElement('p')
+  name.className = 'subject-name'
+  name.textContent = fighter.label
+
+  card.append(mugshot, name)
+  if (role === 'winner') {
+    const badge = document.createElement('p')
+    badge.className = 'battle-role'
+    badge.textContent = 'King asshole'
+    card.append(badge)
+  }
+  return card
+}
+
+function battleStampCopy(outcome: BattleOutcome): { text: string; tone: string } {
+  switch (outcome) {
+    case 'a':
+    case 'b':
+      return { text: '🚨 KING ASSHOLE', tone: 'bad' }
+    case 'tie-assholes':
+      return { text: '🚨 MUTUAL ASSHOLERY', tone: 'bad' }
+    case 'tie-civil':
+      return { text: '✅ DISAPPOINTINGLY CIVIL', tone: 'good' }
+  }
+}
+
+function renderBattleResult(
+  verdict: BattleVerdict,
+  left: BattleFighter,
+  right: BattleFighter,
+) {
+  const panel = document.createElement('section')
+  panel.className = 'panel result-panel battle-result'
+
+  const arena = document.createElement('div')
+  arena.className = 'battle-arena'
+  arena.setAttribute('aria-label', 'Battle contenders')
+
+  const leftRole =
+    verdict.outcome === 'a'
+      ? 'winner'
+      : verdict.outcome === 'b'
+        ? 'loser'
+        : 'tied'
+  const rightRole =
+    verdict.outcome === 'b'
+      ? 'winner'
+      : verdict.outcome === 'a'
+        ? 'loser'
+        : 'tied'
+
+  const versus = document.createElement('p')
+  versus.className = 'battle-vs battle-vs-result'
+  versus.setAttribute('aria-hidden', 'true')
+  versus.textContent = 'VS'
+
+  arena.append(
+    createFighterCard(left, leftRole),
+    versus,
+    createFighterCard(right, rightRole),
+  )
+
+  const stampCopy = battleStampCopy(verdict.outcome)
+  const stamp = document.createElement('div')
+  stamp.className = `stamp ${stampCopy.tone}`
+  stamp.textContent = stampCopy.text
+
+  const confidence = document.createElement('p')
+  confidence.className = 'confidence'
+  confidence.textContent = `${verdict.confidence}% CONFIDENCE`
+
+  const reason = document.createElement('blockquote')
+  reason.className = 'reason'
+  reason.textContent = verdict.reason
+
+  const meta = document.createElement('p')
+  meta.className = 'meta'
+  meta.textContent = `Based on ${left.noteCount} vs ${right.noteCount} recent Nostr notes.`
+
+  const judgedBy = document.createElement('p')
+  judgedBy.className = 'judged-by'
+  const judgedLabel = document.createElement('span')
+  judgedLabel.className = 'judged-by-label'
+  judgedLabel.textContent = 'Judged by'
+  const judgedModel = document.createElement('span')
+  judgedModel.className = 'judged-by-model'
+  judgedModel.textContent = displayModelName(verdict.model)
+  judgedBy.append(judgedLabel, document.createTextNode(' '), judgedModel)
+
+  const actions = document.createElement('div')
+  actions.className = 'actions'
+
+  const again = document.createElement('button')
+  again.type = 'button'
+  again.className = 'primary'
+  again.textContent = 'NEW BATTLE'
+  again.addEventListener('click', () => goIdle())
+
+  actions.append(again)
+
+  panel.append(
+    arena,
+    stamp,
+    confidence,
+    reason,
+    meta,
+    judgedBy,
+    createDisclaimer(),
+  )
+  renderShell(panel, { after: actions, disclaimer: false })
+}
+
+function fighterLabel(profile: ProfileInfo, fallback: string): string {
+  const named = profile.displayName?.trim()
+  if (named) return named.length <= 28 ? named : `${named.slice(0, 25)}…`
+  const trimmed = fallback.trim()
+  if (!trimmed) return 'Unknown subject'
+  if (trimmed.length <= 28) return trimmed
+  return `${trimmed.slice(0, 25)}…`
+}
+
+function mapJudgeError(error: unknown): AppState | undefined {
+  if (error instanceof PrivateKeyError) {
+    return {
+      view: 'error',
+      title: 'PRIVATE KEY DETECTED',
+      detail:
+        'Never paste an nsec here. Use an npub, nprofile, NIP-05, or pubkey instead.',
+      retryable: false,
+    }
+  }
+
+  if (error instanceof IdentityError) {
+    return {
+      view: 'error',
+      title: 'INVALID NOSTR IDENTITY',
+      detail:
+        error.message !== 'INVALID NOSTR IDENTITY'
+          ? error.message
+          : 'Enter a name, npub, nprofile, NIP-05 address, or pubkey.',
+      retryable: false,
+    }
+  }
+
+  if (error instanceof Nip05Error) {
+    return {
+      view: 'error',
+      title: 'NIP-05 LOOKUP FAILED',
+      detail: error.message,
+      retryable: true,
+    }
+  }
+
+  if (error instanceof GeminiConsentRequiredError) {
+    return { view: 'idle' }
+  }
+
+  if (error instanceof ClientLimitError) {
+    return {
+      view: 'error',
+      title: 'EASY, JUDGE',
+      detail:
+        'This browser has used up its free judgments for today. Install Inference Bridge to keep judging with your own provider and model.',
+      retryable: false,
+      bridgeCta: true,
+    }
+  }
+
+  if (error instanceof RateLimitedError) {
+    return {
+      view: 'error',
+      title: 'TOO MANY JUDGMENTS AT ONCE',
+      detail:
+        'Our asshole judge needs a minute. Try again in a little while, or install Inference Bridge to keep judging with your own provider and model.',
+      retryable: true,
+      bridgeCta: true,
+    }
+  }
+
+  if (error instanceof QuotaExhaustedError) {
+    return {
+      view: 'error',
+      title: 'NO MORE FREE ASSHOLE DETECTIONS FOR TODAY',
+      detail:
+        'Our asshole judge is cooked. Install Inference Bridge to keep judging with your own provider and model.',
+      retryable: false,
+      bridgeCta: true,
+    }
+  }
+
+  if (error instanceof InferenceUnavailableError) {
+    return {
+      view: 'error',
+      title: 'NO JUDGE AVAILABLE',
+      detail:
+        'Nobody here is available to judge assholeness right now. Install Inference Bridge to keep judging with your own provider and model.',
+      retryable: true,
+      bridgeCta: true,
+    }
+  }
+
+  if (error instanceof VerdictParseError) {
+    console.error('[AssholeNet] malfunction', {
+      cause: error.causeDetail,
+      raw: error.raw,
+    })
+    return {
+      view: 'error',
+      title: 'ASSHOLENET MALFUNCTION',
+      detail: 'The machine refuses to pass judgment.',
+      retryable: true,
+    }
+  }
+
+  const message = error instanceof Error ? error.message : String(error)
+  const looksLikeRelay =
+    /websocket|relay|timeout|failed to fetch|network/i.test(message)
+
+  if (looksLikeRelay) {
+    return {
+      view: 'error',
+      title: 'THE RELAYS ARE BEING DIFFICULT.',
+      detail: 'Try again.',
+      retryable: true,
+    }
+  }
+
+  console.error('[AssholeNet] unexpected judge error', error)
+  return {
+    view: 'error',
+    title: 'ASSHOLENET MALFUNCTION',
+    detail: 'The machine refuses to pass judgment.',
+    retryable: true,
+  }
+}
+
+async function battle(rawLeft: string, rawRight: string) {
+  lastBattleLeft = rawLeft.trim()
+  lastBattleRight = rawRight.trim()
+  closeDocket({ replaceUrl: false })
+  closeStamp({ replaceUrl: false })
+  syncOverlayUrl('none')
+  abortController?.abort()
+  abortController = new AbortController()
+  const signal = abortController.signal
+
+  if (!lastBattleLeft || !lastBattleRight) {
+    setState({
+      view: 'error',
+      title: 'NEED TWO CONTENDERS',
+      detail: 'Enter two Nostr identities before starting a battle.',
+      retryable: false,
+    })
+    return
+  }
+
+  if (lastBattleLeft.toLowerCase() === lastBattleRight.toLowerCase()) {
+    setState({
+      view: 'error',
+      title: 'THAT IS JUST ONE PERSON',
+      detail:
+        'Pick two different identities. Fighting yourself is a different product.',
+      retryable: false,
+    })
+    return
+  }
+
+  startLoadingCycle(FETCH_LOADING_MESSAGES)
+
+  try {
+    if (!(await canRequestVerdict())) {
+      stopLoadingCycle()
+      setState({
+        view: 'error',
+        title: 'NO JUDGE AVAILABLE',
+        detail:
+          'Nobody here is available to judge assholeness right now. Install Inference Bridge to keep judging with your own provider and model.',
+        retryable: true,
+        bridgeCta: true,
+      })
+      return
+    }
+    if (!isActiveJudge(signal)) return
+
+    const [leftIdentity, rightIdentity] = await Promise.all([
+      resolveSubmittedIdentity(lastBattleLeft, signal),
+      resolveSubmittedIdentity(lastBattleRight, signal),
+    ])
+    if (!isActiveJudge(signal)) return
+
+    if (leftIdentity.pubkey === rightIdentity.pubkey) {
+      stopLoadingCycle()
+      setState({
+        view: 'error',
+        title: 'THAT IS JUST ONE PERSON',
+        detail:
+          'Those identities resolve to the same pubkey. Pick two different people.',
+        retryable: false,
+      })
+      return
+    }
+
+    const [leftNotes, rightNotes, leftProfile, rightProfile] =
+      await Promise.all([
+        fetchRecentNotes(leftIdentity),
+        fetchRecentNotes(rightIdentity),
+        fetchProfile(leftIdentity),
+        fetchProfile(rightIdentity),
+      ])
+    if (!isActiveJudge(signal)) return
+
+    if (leftNotes.length === 0 || rightNotes.length === 0) {
+      stopLoadingCycle()
+      const who =
+        leftNotes.length === 0 && rightNotes.length === 0
+          ? 'Neither contender'
+          : leftNotes.length === 0
+            ? 'Contender A'
+            : 'Contender B'
+      setState({
+        view: 'error',
+        title: 'NO ASSHOLE DATA FOUND',
+        detail: `${who} doesn't appear to have enough recent kind 1 posts.`,
+        retryable: true,
+      })
+      return
+    }
+
+    if (leftNotes.length < MIN_NOTES || rightNotes.length < MIN_NOTES) {
+      stopLoadingCycle()
+      setState({
+        view: 'error',
+        title: 'INSUFFICIENT EVIDENCE',
+        detail:
+          'AssholeNet needs at least 3 usable posts from each contender before the thunderdome opens.',
+        retryable: false,
+      })
+      return
+    }
+
+    startLoadingCycle(BATTLE_LOADING_MESSAGES)
+
+    const leftName = leftProfile.displayName
+    const rightName = rightProfile.displayName
+    const verdict = await requestBattleVerdict(
+      {
+        leftNotes: formatNotesForPrompt(leftNotes),
+        rightNotes: formatNotesForPrompt(rightNotes),
+      },
+      {
+        signal,
+        leftName,
+        rightName,
+        ensureGeminiConsent: askGeminiConsent,
+      },
+    )
+    if (!isActiveJudge(signal)) return
+
+    stopLoadingCycle()
+    setState({
+      view: 'battle-result',
+      verdict,
+      left: {
+        label: fighterLabel(leftProfile, lastBattleLeft),
+        profile: leftProfile,
+        noteCount: leftNotes.length,
+      },
+      right: {
+        label: fighterLabel(rightProfile, lastBattleRight),
+        profile: rightProfile,
+        noteCount: rightNotes.length,
+      },
+    })
+  } catch (error) {
+    if (!isActiveJudge(signal)) return
+    stopLoadingCycle()
+    if (error instanceof PrivateKeyError) {
+      lastBattleLeft = ''
+      lastBattleRight = ''
+    }
+    const next = mapJudgeError(error)
+    if (next) setState(next)
+  }
+}
+
 function render() {
   closeOpenInDialog()
 
   if (state.view !== 'idle') {
-    comboboxCleanup?.()
-    comboboxCleanup = undefined
+    clearComboboxes()
   }
 
   switch (state.view) {
     case 'idle':
       renderShell(renderForm(), { after: renderDocket(docketList) })
       if (!docketIdFromSearch() && !isStampSearch()) {
-        document.querySelector<HTMLInputElement>('#identity')?.focus()
+        const focusId =
+          judgeMode === 'battle' ? '#battle-left' : '#identity'
+        document.querySelector<HTMLInputElement>(focusId)?.focus()
       }
       void refreshDocket()
       break
@@ -1043,6 +1615,9 @@ function render() {
         state.showNotes,
         state.snapshot,
       )
+      break
+    case 'battle-result':
+      renderBattleResult(state.verdict, state.left, state.right)
       break
   }
 }
@@ -1164,130 +1739,11 @@ async function judge(raw: string) {
   } catch (error) {
     if (!isActiveJudge(signal)) return
     stopLoadingCycle()
-
     if (error instanceof PrivateKeyError) {
       lastInput = ''
-      setState({
-        view: 'error',
-        title: 'PRIVATE KEY DETECTED',
-        detail:
-          'Never paste an nsec here. Use an npub, nprofile, NIP-05, or pubkey instead.',
-        retryable: false,
-      })
-      return
     }
-
-    if (error instanceof IdentityError) {
-      setState({
-        view: 'error',
-        title: 'INVALID NOSTR IDENTITY',
-        detail:
-          error.message !== 'INVALID NOSTR IDENTITY'
-            ? error.message
-            : 'Enter a name, npub, nprofile, NIP-05 address, or pubkey.',
-        retryable: false,
-      })
-      return
-    }
-
-    if (error instanceof Nip05Error) {
-      setState({
-        view: 'error',
-        title: 'NIP-05 LOOKUP FAILED',
-        detail: error.message,
-        retryable: true,
-      })
-      return
-    }
-
-    if (error instanceof GeminiConsentRequiredError) {
-      setState({ view: 'idle' })
-      return
-    }
-
-    if (error instanceof ClientLimitError) {
-      setState({
-        view: 'error',
-        title: 'EASY, JUDGE',
-        detail:
-          'This browser has used up its free judgments for today. Install Inference Bridge to keep judging with your own provider and model.',
-        retryable: false,
-        bridgeCta: true,
-      })
-      return
-    }
-
-    if (error instanceof RateLimitedError) {
-      setState({
-        view: 'error',
-        title: 'TOO MANY JUDGMENTS AT ONCE',
-        detail:
-          'Our asshole judge needs a minute. Try again in a little while, or install Inference Bridge to keep judging with your own provider and model.',
-        retryable: true,
-        bridgeCta: true,
-      })
-      return
-    }
-
-    if (error instanceof QuotaExhaustedError) {
-      setState({
-        view: 'error',
-        title: 'NO MORE FREE ASSHOLE DETECTIONS FOR TODAY',
-        detail:
-          'Our asshole judge is cooked. Install Inference Bridge to keep judging with your own provider and model.',
-        retryable: false,
-        bridgeCta: true,
-      })
-      return
-    }
-
-    if (error instanceof InferenceUnavailableError) {
-      setState({
-        view: 'error',
-        title: 'NO JUDGE AVAILABLE',
-        detail:
-          'Nobody here is available to judge assholeness right now. Install Inference Bridge to keep judging with your own provider and model.',
-        retryable: true,
-        bridgeCta: true,
-      })
-      return
-    }
-
-    if (error instanceof VerdictParseError) {
-      console.error('[AssholeNet] malfunction', {
-        cause: error.causeDetail,
-        raw: error.raw,
-      })
-      setState({
-        view: 'error',
-        title: 'ASSHOLENET MALFUNCTION',
-        detail: 'The machine refuses to pass judgment.',
-        retryable: true,
-      })
-      return
-    }
-
-    const message = error instanceof Error ? error.message : String(error)
-    const looksLikeRelay =
-      /websocket|relay|timeout|failed to fetch|network/i.test(message)
-
-    if (looksLikeRelay) {
-      setState({
-        view: 'error',
-        title: 'THE RELAYS ARE BEING DIFFICULT.',
-        detail: 'Try again.',
-        retryable: true,
-      })
-      return
-    }
-
-    console.error('[AssholeNet] unexpected judge error', error)
-    setState({
-      view: 'error',
-      title: 'ASSHOLENET MALFUNCTION',
-      detail: 'The machine refuses to pass judgment.',
-      retryable: true,
-    })
+    const next = mapJudgeError(error)
+    if (next) setState(next)
   }
 }
 

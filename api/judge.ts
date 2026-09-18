@@ -278,6 +278,7 @@ export default async function handler(
   }
   if (prompt.system) {
     geminiBody.systemInstruction = {
+      role: 'system',
       parts: [{ text: prompt.system }],
     }
   }

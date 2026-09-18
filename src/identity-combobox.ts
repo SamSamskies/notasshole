@@ -6,7 +6,11 @@ import {
   type ProfileSuggestion,
 } from './profile-search'
 
-export function attachIdentityCombobox(input: HTMLInputElement): () => void {
+export function attachIdentityCombobox(
+  input: HTMLInputElement,
+  options?: { idPrefix?: string },
+): () => void {
+  const idPrefix = options?.idPrefix?.trim() || input.id || 'identity'
   const root = document.createElement('div')
   root.className = 'identity-combobox'
   input.parentNode?.insertBefore(root, input)
@@ -14,7 +18,7 @@ export function attachIdentityCombobox(input: HTMLInputElement): () => void {
 
   const listbox = document.createElement('ul')
   listbox.className = 'suggest-list'
-  listbox.id = 'identity-suggestions'
+  listbox.id = `${idPrefix}-suggestions`
   listbox.setAttribute('role', 'listbox')
   listbox.hidden = true
   root.append(listbox)
@@ -79,7 +83,7 @@ export function attachIdentityCombobox(input: HTMLInputElement): () => void {
 
     for (const [index, item] of items.entries()) {
       const option = document.createElement('li')
-      option.id = `identity-suggestion-${index}`
+      option.id = `${idPrefix}-suggestion-${index}`
       option.className = 'suggest-option'
       option.setAttribute('role', 'option')
       option.setAttribute('aria-selected', 'false')
