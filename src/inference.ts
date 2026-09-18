@@ -17,7 +17,22 @@ export type Verdict = {
   model: string
 }
 
+export type BattleOutcome = 'a' | 'b' | 'tie-assholes' | 'tie-civil'
+
+export type BattleVerdict = {
+  outcome: BattleOutcome
+  confidence: number
+  reason: string
+  model: string
+}
+
 const MAX_PROMPT_NAME_LENGTH = 80
+const BATTLE_OUTCOMES = new Set<BattleOutcome>([
+  'a',
+  'b',
+  'tie-assholes',
+  'tie-civil',
+])
 
 /** Collapse a Nostr display name so it can sit in the system prompt. */
 export function promptSafeName(name: string): string | undefined {
@@ -101,6 +116,91 @@ export function createUserPrompt(notesText: string, name?: string): string {
   const safeName = name ? promptSafeName(name) : undefined
   const header = safeName ? `Person being judged: ${safeName}\n\n` : ''
   return `${header}Recent Nostr posts:\n\n${notesText}`
+}
+
+export function createBattleSystemPrompt(
+  leftName?: string,
+  rightName?: string,
+): string {
+  const left = promptSafeName(leftName ?? '') ?? 'Contender A'
+  const right = promptSafeName(rightName ?? '') ?? 'Contender B'
+
+  return `You are AssholeNet, an intentionally ridiculous fictional classifier and judge.
+
+Your job is to compare two people's recent public Nostr posts and decide who is the bigger asshole — or declare a tie.
+
+This is entertainment and not a factual psychological assessment.
+
+Contender A is ${left}.
+Contender B is ${right}.
+
+You are AssholeNet, the judge. ${left} and ${right} are the people on trial — not you. Refer to each by name in third person only. Do not write as if either contender is narrating or delivering the verdict.
+
+Never call them "the subject", "this subject", "the user", "this user", or other clinical or generic labels.
+
+Base the joke only on the content and behavior visible in the provided posts.
+
+Things you may humorously notice include:
+
+- unnecessary hostility
+- constant arguing
+- excessive self-importance
+- condescension
+- reply-guy behavior
+- needless negativity
+- performative outrage
+- bragging
+- excessive lecturing
+- relentless complaining
+- surprisingly wholesome behavior
+- helpfulness
+- humor
+- friendliness
+- self-awareness
+
+Do not infer protected or sensitive traits.
+
+Do not make claims about mental illness, intelligence, criminality, sexuality, religion, ethnicity, health, or other sensitive characteristics.
+
+Pick exactly one outcome:
+
+- "a" — Contender A (${left}) is the bigger asshole (king asshole)
+- "b" — Contender B (${right}) is the bigger asshole (king asshole)
+- "tie-assholes" — mutual assholery; both are assholes in comparable ways
+- "tie-civil" — disappointingly civil; neither earned a strong asshole case from these posts
+
+Do not default to a tie just to be polite. Prefer a clear winner when the posts support one.
+
+Keep the explanation funny but grounded in the supplied posts. Mention both people by name.
+
+Return only JSON:
+
+{
+  "outcome": "a" | "b" | "tie-assholes" | "tie-civil",
+  "confidence": integer from 50 to 99,
+  "reason": "one concise humorous explanation"
+}`
+}
+
+export function createBattleUserPrompt(input: {
+  leftNotes: string
+  rightNotes: string
+  leftName?: string
+  rightName?: string
+}): string {
+  const left = promptSafeName(input.leftName ?? '') ?? 'Contender A'
+  const right = promptSafeName(input.rightName ?? '') ?? 'Contender B'
+  return `Contender A: ${left}
+
+Recent Nostr posts:
+${input.leftNotes}
+
+---
+
+Contender B: ${right}
+
+Recent Nostr posts:
+${input.rightNotes}`
 }
 
 export const INFERENCE_BRIDGE_URL =
@@ -290,6 +390,54 @@ export function parseVerdict(raw: string): Verdict {
   }
 }
 
+export function parseBattleVerdict(raw: string): BattleVerdict {
+  let data: unknown
+  try {
+    data = extractJsonObject(raw)
+  } catch (error) {
+    if (error instanceof VerdictParseError) throw error
+    throw new VerdictParseError('failed to extract JSON', raw)
+  }
+
+  if (!data || typeof data !== 'object') {
+    throw new VerdictParseError(
+      `parsed value is ${data === null ? 'null' : typeof data}, expected object`,
+      raw,
+    )
+  }
+
+  const record = data as Record<string, unknown>
+  const outcome = record.outcome
+  const confidence = coerceConfidence(record.confidence)
+  const reason = record.reason
+
+  if (typeof outcome !== 'string' || !BATTLE_OUTCOMES.has(outcome as BattleOutcome)) {
+    throw new VerdictParseError(
+      `invalid outcome ${JSON.stringify(outcome)} (expected "a" | "b" | "tie-assholes" | "tie-civil")`,
+      raw,
+    )
+  }
+  if (confidence === null) {
+    throw new VerdictParseError(
+      `invalid confidence ${JSON.stringify(record.confidence)}`,
+      raw,
+    )
+  }
+  if (typeof reason !== 'string' || !reason.trim()) {
+    throw new VerdictParseError(
+      `invalid reason ${JSON.stringify(reason)}`,
+      raw,
+    )
+  }
+
+  return {
+    outcome: outcome as BattleOutcome,
+    confidence: Math.max(50, Math.min(99, Math.round(confidence))),
+    reason: reason.trim(),
+    model: '',
+  }
+}
+
 /** Accept numeric JSON numbers or common string forms like "85". */
 function coerceConfidence(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value
@@ -313,11 +461,26 @@ export type RequestVerdictOptions = {
   ensureGeminiConsent?: () => Promise<boolean>
 }
 
-export async function requestVerdict(
-  notesText: string,
-  options: RequestVerdictOptions = {},
-): Promise<Verdict> {
-  const { signal, ensureGeminiConsent, name } = options
+export type RequestBattleVerdictOptions = {
+  signal?: AbortSignal
+  leftName?: string
+  rightName?: string
+  ensureGeminiConsent?: () => Promise<boolean>
+}
+
+type ChatMessage = {
+  role: 'system' | 'user'
+  content: string
+}
+
+async function completeJudgment(
+  messages: ChatMessage[],
+  options: {
+    signal?: AbortSignal
+    ensureGeminiConsent?: () => Promise<boolean>
+  },
+): Promise<{ content: string; model: string }> {
+  const { signal, ensureGeminiConsent } = options
 
   if (!isSupportedContext()) {
     throw new InferenceUnavailableError(
@@ -342,38 +505,21 @@ export async function requestVerdict(
     }
   }
 
-  const userContent = createUserPrompt(notesText, name)
   let content = ''
   let model = ''
 
   try {
-    const done = await inferenceClient.complete(
-      {
-        method: 'chat',
-        messages: [
-          { role: 'system', content: createSystemPrompt(name) },
-          { role: 'user', content: userContent },
-        ],
-        options: { reasoningEffort: 'none' },
-        signal,
-      },
-    )
+    const done = await inferenceClient.complete({
+      method: 'chat',
+      messages,
+      options: { reasoningEffort: 'none' },
+      signal,
+    })
     content =
       typeof done.message.content === 'string' ? done.message.content : ''
     model = done.model?.trim() ?? ''
-
-    const verdict = parseVerdict(content)
-    return { ...verdict, model }
+    return { content, model }
   } catch (error) {
-    if (error instanceof VerdictParseError) {
-      console.warn('[AssholeNet] verdict parse failed', {
-        model: model || '(unknown)',
-        cause: error.causeDetail,
-        raw: error.raw || content,
-      })
-      throw error
-    }
-
     if (isInferenceError(error)) {
       if (
         error.code === 'unavailable' &&
@@ -405,6 +551,74 @@ export async function requestVerdict(
     }
 
     console.warn('[AssholeNet] unexpected inference error', error)
+    throw error
+  }
+}
+
+export async function requestVerdict(
+  notesText: string,
+  options: RequestVerdictOptions = {},
+): Promise<Verdict> {
+  const { signal, ensureGeminiConsent, name } = options
+  const { content, model } = await completeJudgment(
+    [
+      { role: 'system', content: createSystemPrompt(name) },
+      { role: 'user', content: createUserPrompt(notesText, name) },
+    ],
+    { signal, ensureGeminiConsent },
+  )
+
+  try {
+    return { ...parseVerdict(content), model }
+  } catch (error) {
+    if (error instanceof VerdictParseError) {
+      console.warn('[AssholeNet] verdict parse failed', {
+        model: model || '(unknown)',
+        cause: error.causeDetail,
+        raw: error.raw || content,
+      })
+    }
+    throw error
+  }
+}
+
+export async function requestBattleVerdict(
+  input: {
+    leftNotes: string
+    rightNotes: string
+  },
+  options: RequestBattleVerdictOptions = {},
+): Promise<BattleVerdict> {
+  const { signal, ensureGeminiConsent, leftName, rightName } = options
+  const { content, model } = await completeJudgment(
+    [
+      {
+        role: 'system',
+        content: createBattleSystemPrompt(leftName, rightName),
+      },
+      {
+        role: 'user',
+        content: createBattleUserPrompt({
+          leftNotes: input.leftNotes,
+          rightNotes: input.rightNotes,
+          leftName,
+          rightName,
+        }),
+      },
+    ],
+    { signal, ensureGeminiConsent },
+  )
+
+  try {
+    return { ...parseBattleVerdict(content), model }
+  } catch (error) {
+    if (error instanceof VerdictParseError) {
+      console.warn('[AssholeNet] battle verdict parse failed', {
+        model: model || '(unknown)',
+        cause: error.causeDetail,
+        raw: error.raw || content,
+      })
+    }
     throw error
   }
 }

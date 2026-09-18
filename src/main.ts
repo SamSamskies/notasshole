@@ -16,8 +16,11 @@ import {
   GeminiConsentRequiredError,
   QuotaExhaustedError,
   RateLimitedError,
+  requestBattleVerdict,
   requestVerdict,
   VerdictParseError,
+  type BattleOutcome,
+  type BattleVerdict,
   type Verdict,
 } from './inference'
 import { attachIdentityCombobox } from './identity-combobox'
@@ -85,18 +88,10 @@ const BATTLE_LOADING_MESSAGES = [
 
 type JudgeMode = 'judge' | 'battle'
 
-type BattleOutcome = 'a' | 'b' | 'tie-assholes' | 'tie-civil'
-
-type BattleVerdict = {
-  outcome: BattleOutcome
-  confidence: number
-  reason: string
-  model?: string
-}
-
 type BattleFighter = {
   label: string
   profile: ProfileInfo
+  noteCount: number
 }
 
 type AppState =
@@ -1243,7 +1238,7 @@ function renderBattleResult(
 
   const meta = document.createElement('p')
   meta.className = 'meta'
-  meta.textContent = 'UI preview — AI battle judging not wired yet.'
+  meta.textContent = `Based on ${left.noteCount} vs ${right.noteCount} recent Nostr notes.`
 
   const judgedBy = document.createElement('p')
   judgedBy.className = 'judged-by'
@@ -1278,50 +1273,128 @@ function renderBattleResult(
   renderShell(panel, { after: actions, disclaimer: false })
 }
 
-function mockBattleVerdict(leftLabel: string, rightLabel: string): BattleVerdict {
-  const score =
-    [...`${leftLabel}\0${rightLabel}`].reduce(
-      (sum, char) => sum + char.charCodeAt(0),
-      0,
-    ) % 4
-
-  if (score === 0) {
-    return {
-      outcome: 'a',
-      confidence: 78,
-      reason: `${leftLabel} edges it — more unsolicited advice per note, less self-awareness per paragraph.`,
-      model: 'preview-mock',
-    }
-  }
-  if (score === 1) {
-    return {
-      outcome: 'b',
-      confidence: 71,
-      reason: `${rightLabel} takes the belt. The ratio of dunks to substance is simply unmatched.`,
-      model: 'preview-mock',
-    }
-  }
-  if (score === 2) {
-    return {
-      outcome: 'tie-assholes',
-      confidence: 66,
-      reason: `Mutual assholery. ${leftLabel} and ${rightLabel} are different flavors of the same problem.`,
-      model: 'preview-mock',
-    }
-  }
-  return {
-    outcome: 'tie-civil',
-    confidence: 62,
-    reason: `Disappointingly civil. ${leftLabel} and ${rightLabel} left AssholeNet with nothing spicy to work with.`,
-    model: 'preview-mock',
-  }
-}
-
-function fighterLabel(raw: string): string {
-  const trimmed = raw.trim()
+function fighterLabel(profile: ProfileInfo, fallback: string): string {
+  const named = profile.displayName?.trim()
+  if (named) return named.length <= 28 ? named : `${named.slice(0, 25)}…`
+  const trimmed = fallback.trim()
   if (!trimmed) return 'Unknown subject'
   if (trimmed.length <= 28) return trimmed
   return `${trimmed.slice(0, 25)}…`
+}
+
+function mapJudgeError(error: unknown): AppState | undefined {
+  if (error instanceof PrivateKeyError) {
+    return {
+      view: 'error',
+      title: 'PRIVATE KEY DETECTED',
+      detail:
+        'Never paste an nsec here. Use an npub, nprofile, NIP-05, or pubkey instead.',
+      retryable: false,
+    }
+  }
+
+  if (error instanceof IdentityError) {
+    return {
+      view: 'error',
+      title: 'INVALID NOSTR IDENTITY',
+      detail:
+        error.message !== 'INVALID NOSTR IDENTITY'
+          ? error.message
+          : 'Enter a name, npub, nprofile, NIP-05 address, or pubkey.',
+      retryable: false,
+    }
+  }
+
+  if (error instanceof Nip05Error) {
+    return {
+      view: 'error',
+      title: 'NIP-05 LOOKUP FAILED',
+      detail: error.message,
+      retryable: true,
+    }
+  }
+
+  if (error instanceof GeminiConsentRequiredError) {
+    return { view: 'idle' }
+  }
+
+  if (error instanceof ClientLimitError) {
+    return {
+      view: 'error',
+      title: 'EASY, JUDGE',
+      detail:
+        'This browser has used up its free judgments for today. Install Inference Bridge to keep judging with your own provider and model.',
+      retryable: false,
+      bridgeCta: true,
+    }
+  }
+
+  if (error instanceof RateLimitedError) {
+    return {
+      view: 'error',
+      title: 'TOO MANY JUDGMENTS AT ONCE',
+      detail:
+        'Our asshole judge needs a minute. Try again in a little while, or install Inference Bridge to keep judging with your own provider and model.',
+      retryable: true,
+      bridgeCta: true,
+    }
+  }
+
+  if (error instanceof QuotaExhaustedError) {
+    return {
+      view: 'error',
+      title: 'NO MORE FREE ASSHOLE DETECTIONS FOR TODAY',
+      detail:
+        'Our asshole judge is cooked. Install Inference Bridge to keep judging with your own provider and model.',
+      retryable: false,
+      bridgeCta: true,
+    }
+  }
+
+  if (error instanceof InferenceUnavailableError) {
+    return {
+      view: 'error',
+      title: 'NO JUDGE AVAILABLE',
+      detail:
+        'Nobody here is available to judge assholeness right now. Install Inference Bridge to keep judging with your own provider and model.',
+      retryable: true,
+      bridgeCta: true,
+    }
+  }
+
+  if (error instanceof VerdictParseError) {
+    console.error('[AssholeNet] malfunction', {
+      cause: error.causeDetail,
+      raw: error.raw,
+    })
+    return {
+      view: 'error',
+      title: 'ASSHOLENET MALFUNCTION',
+      detail: 'The machine refuses to pass judgment.',
+      retryable: true,
+    }
+  }
+
+  const message = error instanceof Error ? error.message : String(error)
+  const looksLikeRelay =
+    /websocket|relay|timeout|failed to fetch|network/i.test(message)
+
+  if (looksLikeRelay) {
+    return {
+      view: 'error',
+      title: 'THE RELAYS ARE BEING DIFFICULT.',
+      detail: 'Try again.',
+      retryable: true,
+    }
+  }
+
+  console.error('[AssholeNet] unexpected judge error', error)
+  return {
+    view: 'error',
+    title: 'ASSHOLENET MALFUNCTION',
+    detail: 'The machine refuses to pass judgment.',
+    retryable: true,
+  }
 }
 
 async function battle(rawLeft: string, rawRight: string) {
@@ -1348,27 +1421,129 @@ async function battle(rawLeft: string, rawRight: string) {
     setState({
       view: 'error',
       title: 'THAT IS JUST ONE PERSON',
-      detail: 'Pick two different identities. Fighting yourself is a different product.',
+      detail:
+        'Pick two different identities. Fighting yourself is a different product.',
       retryable: false,
     })
     return
   }
 
-  startLoadingCycle(BATTLE_LOADING_MESSAGES)
+  startLoadingCycle(FETCH_LOADING_MESSAGES)
 
-  // UI preview only — swap this for real note fetch + comparative judgment later.
-  await new Promise((resolve) => window.setTimeout(resolve, 2200))
-  if (!isActiveJudge(signal)) return
+  try {
+    if (!(await canRequestVerdict())) {
+      stopLoadingCycle()
+      setState({
+        view: 'error',
+        title: 'NO JUDGE AVAILABLE',
+        detail:
+          'Nobody here is available to judge assholeness right now. Install Inference Bridge to keep judging with your own provider and model.',
+        retryable: true,
+        bridgeCta: true,
+      })
+      return
+    }
+    if (!isActiveJudge(signal)) return
 
-  stopLoadingCycle()
-  const leftLabel = fighterLabel(lastBattleLeft)
-  const rightLabel = fighterLabel(lastBattleRight)
-  setState({
-    view: 'battle-result',
-    verdict: mockBattleVerdict(leftLabel, rightLabel),
-    left: { label: leftLabel, profile: { displayName: leftLabel } },
-    right: { label: rightLabel, profile: { displayName: rightLabel } },
-  })
+    const [leftIdentity, rightIdentity] = await Promise.all([
+      resolveSubmittedIdentity(lastBattleLeft, signal),
+      resolveSubmittedIdentity(lastBattleRight, signal),
+    ])
+    if (!isActiveJudge(signal)) return
+
+    if (leftIdentity.pubkey === rightIdentity.pubkey) {
+      stopLoadingCycle()
+      setState({
+        view: 'error',
+        title: 'THAT IS JUST ONE PERSON',
+        detail:
+          'Those identities resolve to the same pubkey. Pick two different people.',
+        retryable: false,
+      })
+      return
+    }
+
+    const [leftNotes, rightNotes, leftProfile, rightProfile] =
+      await Promise.all([
+        fetchRecentNotes(leftIdentity),
+        fetchRecentNotes(rightIdentity),
+        fetchProfile(leftIdentity),
+        fetchProfile(rightIdentity),
+      ])
+    if (!isActiveJudge(signal)) return
+
+    if (leftNotes.length === 0 || rightNotes.length === 0) {
+      stopLoadingCycle()
+      const who =
+        leftNotes.length === 0 && rightNotes.length === 0
+          ? 'Neither contender'
+          : leftNotes.length === 0
+            ? 'Contender A'
+            : 'Contender B'
+      setState({
+        view: 'error',
+        title: 'NO ASSHOLE DATA FOUND',
+        detail: `${who} doesn't appear to have enough recent kind 1 posts.`,
+        retryable: true,
+      })
+      return
+    }
+
+    if (leftNotes.length < MIN_NOTES || rightNotes.length < MIN_NOTES) {
+      stopLoadingCycle()
+      setState({
+        view: 'error',
+        title: 'INSUFFICIENT EVIDENCE',
+        detail:
+          'AssholeNet needs at least 3 usable posts from each contender before the thunderdome opens.',
+        retryable: false,
+      })
+      return
+    }
+
+    startLoadingCycle(BATTLE_LOADING_MESSAGES)
+
+    const leftName = leftProfile.displayName
+    const rightName = rightProfile.displayName
+    const verdict = await requestBattleVerdict(
+      {
+        leftNotes: formatNotesForPrompt(leftNotes),
+        rightNotes: formatNotesForPrompt(rightNotes),
+      },
+      {
+        signal,
+        leftName,
+        rightName,
+        ensureGeminiConsent: askGeminiConsent,
+      },
+    )
+    if (!isActiveJudge(signal)) return
+
+    stopLoadingCycle()
+    setState({
+      view: 'battle-result',
+      verdict,
+      left: {
+        label: fighterLabel(leftProfile, lastBattleLeft),
+        profile: leftProfile,
+        noteCount: leftNotes.length,
+      },
+      right: {
+        label: fighterLabel(rightProfile, lastBattleRight),
+        profile: rightProfile,
+        noteCount: rightNotes.length,
+      },
+    })
+  } catch (error) {
+    if (!isActiveJudge(signal)) return
+    stopLoadingCycle()
+    if (error instanceof PrivateKeyError) {
+      lastBattleLeft = ''
+      lastBattleRight = ''
+    }
+    const next = mapJudgeError(error)
+    if (next) setState(next)
+  }
 }
 
 function render() {
@@ -1534,130 +1709,11 @@ async function judge(raw: string) {
   } catch (error) {
     if (!isActiveJudge(signal)) return
     stopLoadingCycle()
-
     if (error instanceof PrivateKeyError) {
       lastInput = ''
-      setState({
-        view: 'error',
-        title: 'PRIVATE KEY DETECTED',
-        detail:
-          'Never paste an nsec here. Use an npub, nprofile, NIP-05, or pubkey instead.',
-        retryable: false,
-      })
-      return
     }
-
-    if (error instanceof IdentityError) {
-      setState({
-        view: 'error',
-        title: 'INVALID NOSTR IDENTITY',
-        detail:
-          error.message !== 'INVALID NOSTR IDENTITY'
-            ? error.message
-            : 'Enter a name, npub, nprofile, NIP-05 address, or pubkey.',
-        retryable: false,
-      })
-      return
-    }
-
-    if (error instanceof Nip05Error) {
-      setState({
-        view: 'error',
-        title: 'NIP-05 LOOKUP FAILED',
-        detail: error.message,
-        retryable: true,
-      })
-      return
-    }
-
-    if (error instanceof GeminiConsentRequiredError) {
-      setState({ view: 'idle' })
-      return
-    }
-
-    if (error instanceof ClientLimitError) {
-      setState({
-        view: 'error',
-        title: 'EASY, JUDGE',
-        detail:
-          'This browser has used up its free judgments for today. Install Inference Bridge to keep judging with your own provider and model.',
-        retryable: false,
-        bridgeCta: true,
-      })
-      return
-    }
-
-    if (error instanceof RateLimitedError) {
-      setState({
-        view: 'error',
-        title: 'TOO MANY JUDGMENTS AT ONCE',
-        detail:
-          'Our asshole judge needs a minute. Try again in a little while, or install Inference Bridge to keep judging with your own provider and model.',
-        retryable: true,
-        bridgeCta: true,
-      })
-      return
-    }
-
-    if (error instanceof QuotaExhaustedError) {
-      setState({
-        view: 'error',
-        title: 'NO MORE FREE ASSHOLE DETECTIONS FOR TODAY',
-        detail:
-          'Our asshole judge is cooked. Install Inference Bridge to keep judging with your own provider and model.',
-        retryable: false,
-        bridgeCta: true,
-      })
-      return
-    }
-
-    if (error instanceof InferenceUnavailableError) {
-      setState({
-        view: 'error',
-        title: 'NO JUDGE AVAILABLE',
-        detail:
-          'Nobody here is available to judge assholeness right now. Install Inference Bridge to keep judging with your own provider and model.',
-        retryable: true,
-        bridgeCta: true,
-      })
-      return
-    }
-
-    if (error instanceof VerdictParseError) {
-      console.error('[AssholeNet] malfunction', {
-        cause: error.causeDetail,
-        raw: error.raw,
-      })
-      setState({
-        view: 'error',
-        title: 'ASSHOLENET MALFUNCTION',
-        detail: 'The machine refuses to pass judgment.',
-        retryable: true,
-      })
-      return
-    }
-
-    const message = error instanceof Error ? error.message : String(error)
-    const looksLikeRelay =
-      /websocket|relay|timeout|failed to fetch|network/i.test(message)
-
-    if (looksLikeRelay) {
-      setState({
-        view: 'error',
-        title: 'THE RELAYS ARE BEING DIFFICULT.',
-        detail: 'Try again.',
-        retryable: true,
-      })
-      return
-    }
-
-    console.error('[AssholeNet] unexpected judge error', error)
-    setState({
-      view: 'error',
-      title: 'ASSHOLENET MALFUNCTION',
-      detail: 'The machine refuses to pass judgment.',
-      retryable: true,
-    })
+    const next = mapJudgeError(error)
+    if (next) setState(next)
   }
 }
 
