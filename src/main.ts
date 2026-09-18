@@ -613,8 +613,22 @@ function attachFormCombobox(input: HTMLInputElement, idPrefix: string) {
   comboboxCleanups.push(attachIdentityCombobox(input, { idPrefix }))
 }
 
+function captureIdleFormDraft() {
+  if (state.view !== 'idle') return
+  if (judgeMode === 'battle') {
+    const left = app.querySelector<HTMLInputElement>('#battle-left')
+    const right = app.querySelector<HTMLInputElement>('#battle-right')
+    if (left) lastBattleLeft = left.value
+    if (right) lastBattleRight = right.value
+    return
+  }
+  const input = app.querySelector<HTMLInputElement>('#identity')
+  if (input) lastInput = input.value
+}
+
 function setJudgeMode(mode: JudgeMode) {
   if (judgeMode === mode) return
+  captureIdleFormDraft()
   judgeMode = mode
   if (state.view === 'idle') render()
 }
